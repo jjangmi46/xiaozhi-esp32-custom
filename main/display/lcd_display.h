@@ -27,11 +27,11 @@ protected:
     lv_obj_t* side_bar_ = nullptr;
     lv_obj_t* bottom_bar_ = nullptr;
     lv_obj_t* preview_image_ = nullptr;
-    lv_obj_t* emoji_label_ = nullptr;
-    lv_obj_t* emoji_image_ = nullptr;
-    std::unique_ptr<LvglGif> gif_controller_ = nullptr;
-    lv_obj_t* emoji_box_ = nullptr;
-    lv_obj_t* chat_message_label_ = nullptr;
+    lv_obj_t* chat_message_label_;
+    lv_obj_t* emoji_label_;
+    lv_obj_t* emoji_image_;
+    lv_obj_t* emoji_box_;
+    lv_obj_t* emoji_container_;
     esp_timer_handle_t preview_timer_ = nullptr;
     std::unique_ptr<LvglImage> preview_image_cached_ = nullptr;
     bool hide_subtitle_ = false;  // Control whether to hide chat messages/subtitles
