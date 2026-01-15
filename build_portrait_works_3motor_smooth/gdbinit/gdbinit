@@ -1,0 +1,2 @@
+source C:/xiaozhi-esp32-v2/build/gdbinit/symbols
+source C:/xiaozhi-esp32-v2/build/gdbinit/connect

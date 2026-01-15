@@ -2,7 +2,8 @@ menu "Xiaozhi Assistant"
 
 config OTA_URL
     string "Default OTA URL"
-    default "https://api.tenclass.net/xiaozhi/ota/"
+    # default "https://api.tenclass.net/xiaozhi/ota/"
+    default "http://192.168.0.60:8002/xiaozhi/ota/"
     help
         The application will access this URL to check for new firmwares and server address.
 
@@ -117,6 +118,12 @@ choice BOARD_TYPE
     default BOARD_TYPE_BREAD_COMPACT_WIFI
     help
         Board type. 开发板类型
+    config BOARD_TYPE_MY_CUSTOM_BOARD
+        bool "Aliexpress-wifi-LCD"
+        depends on IDF_TARGET_ESP32S3  # 根据你的目标芯片修改
+    config BOARD_TYPE_MY_CUSTOM_BOARD2
+        bool "freenove-esp32s3-display-2.8-lcd"
+        depends on IDF_TARGET_ESP32S3  # 根据你的目标芯片修改
     config BOARD_TYPE_BREAD_COMPACT_WIFI
         bool "Bread Compact WiFi (面包板)"
         depends on IDF_TARGET_ESP32S3

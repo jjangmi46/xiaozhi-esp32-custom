@@ -325,6 +325,7 @@ public:
     void AddUserOnlyTool(const std::string& name, const std::string& description, const PropertyList& properties, std::function<ReturnValue(const PropertyList&)> callback);
     void ParseMessage(const cJSON* json);
     void ParseMessage(const std::string& message);
+    void DoToolCall(int id, const std::string& tool_name, const cJSON* tool_arguments); //moved here
 
 private:
     McpServer();
@@ -336,7 +337,7 @@ private:
     void ReplyError(int id, const std::string& message);
 
     void GetToolsList(int id, const std::string& cursor, bool list_user_only_tools);
-    void DoToolCall(int id, const std::string& tool_name, const cJSON* tool_arguments);
+    
 
     std::vector<McpTool*> tools_;
 };

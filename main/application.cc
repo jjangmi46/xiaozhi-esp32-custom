@@ -9,6 +9,8 @@
 #include "mcp_server.h"
 #include "assets.h"
 #include "settings.h"
+#include "driver/uart.h" // <--- ADD THIS
+#include "esp_log.h"     // <--- Ensure this is present for logging
 
 #include <cstring>
 #include <esp_log.h>
@@ -481,11 +483,31 @@ void Application::Start() {
                     display->SetChatMessage("user", message.c_str());
                 });
             }
+        // } else if (strcmp(type->valuestring, "llm") == 0) {
+        //     auto emotion = cJSON_GetObjectItem(root, "emotion");
+        //     if (cJSON_IsString(emotion)) {
+        //         Schedule([this, display, emotion_str = std::string(emotion->valuestring)]() {
+        //             display->SetEmotion(emotion_str.c_str());
+        //         });
+        //     }
         } else if (strcmp(type->valuestring, "llm") == 0) {
             auto emotion = cJSON_GetObjectItem(root, "emotion");
             if (cJSON_IsString(emotion)) {
                 Schedule([this, display, emotion_str = std::string(emotion->valuestring)]() {
+                    // 1. Original: Set the emotion on the Screen
                     display->SetEmotion(emotion_str.c_str());
+
+                    // 2. NEW: Send emotion to Motor ESP32 via UART1
+                    // We format it as "E:happy\n" so the receiver can parse it easily
+                    char uart_payload[32];
+                    int len = snprintf(uart_payload, sizeof(uart_payload), "E:%s\n", emotion_str.c_str());
+                    
+                    // Send data out of Pin 48 (or whatever you configured in Step 1.2)
+                    // UART_NUM_1 is a constant defined in driver/uart.h
+                    uart_write_bytes(UART_NUM_1, uart_payload, len);
+                    
+                    // Debug Log to confirm it sent
+                    ESP_LOGI("MOTOR_LINK", "Sent offline signal: %s", uart_payload);
                 });
             }
         } else if (strcmp(type->valuestring, "mcp") == 0) {

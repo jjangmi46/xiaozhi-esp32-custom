@@ -133,33 +133,37 @@ SpiLcdDisplay::SpiLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_h
     lvgl_port_init(&port_cfg);
 
     ESP_LOGI(TAG, "Adding LCD display");
-    const lvgl_port_display_cfg_t disp_cfg = {
-        .io_handle = panel_io,
-        .panel_handle = panel,
+    const lvgl_port_display_cfg_t display_cfg = {
+        .io_handle = panel_io_,
+        .panel_handle = panel_,
         .control_handle = nullptr,
-        .buffer_size = static_cast<uint32_t>(width_ * height_ / 10), // Increase buffer slightly
+        .buffer_size = static_cast<uint32_t>(width_ * 20),
         .double_buffer = false,
-        .hres = static_cast<uint32_t>(width_), // Physical Width (320)
-        .vres = static_cast<uint32_t>(height_), // Physical Height (240)
+        .trans_size = 0,
+        .hres = static_cast<uint32_t>(width_),
+        .vres = static_cast<uint32_t>(height_),
         .monochrome = false,
         .rotation = {
             .swap_xy = swap_xy,
             .mirror_x = mirror_x,
             .mirror_y = mirror_y,
         },
+        .color_format = LV_COLOR_FORMAT_RGB565,
         .flags = {
-            .buff_dma = true,
-            .sw_rotate = true, // <--- ENABLE SOFTWARE ROTATION HERE
-            .swap_bytes = true,    // <--- ADD THIS LINE!
+            .buff_dma = 1,
+            .buff_spiram = 0,
+            .sw_rotate = 1, //edited
+            .swap_bytes = 1,
+            .full_refresh = 0,
+            .direct_mode = 0,
         },
     };
 
-    display_ = lvgl_port_add_disp(&disp_cfg);
+    display_ = lvgl_port_add_disp(&display_cfg);
 
     // --- ADD THIS LINE TO FORCE VERTICAL MODE ---
     // Try LV_DISP_ROT_270 or LV_DISP_ROT_90 depending on which way is "Up"
-    lv_disp_set_rotation(display_, LV_DISP_ROTATION_90); //usbport down
-
+    lv_disp_set_rotation(display_, LV_DISP_ROTATION_90); // added; usbport down
 
     if (display_ == nullptr) {
         ESP_LOGE(TAG, "Failed to add display");
@@ -224,6 +228,11 @@ RgbLcdDisplay::RgbLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_h
     };
     
     display_ = lvgl_port_add_disp_rgb(&display_cfg, &rgb_cfg);
+
+    // --- ADD THIS LINE TO FORCE VERTICAL MODE ---
+    // Try LV_DISP_ROT_270 or LV_DISP_ROT_90 depending on which way is "Up"
+    lv_disp_set_rotation(display_, LV_DISP_ROTATION_90); // added; usbport down
+
     if (display_ == nullptr) {
         ESP_LOGE(TAG, "Failed to add RGB display");
         return;
@@ -268,6 +277,7 @@ MipiLcdDisplay::MipiLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel
             .buff_dma = true,
             .buff_spiram =false,
             .sw_rotate = true,
+            .swap_bytes = true, // <--- ADD THIS LINE!
         },
     };
 
@@ -277,6 +287,11 @@ MipiLcdDisplay::MipiLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel
         }
     };
     display_ = lvgl_port_add_disp_dsi(&disp_cfg, &dpi_cfg);
+
+    // --- ADD THIS LINE TO FORCE VERTICAL MODE ---
+    // Try LV_DISP_ROT_270 or LV_DISP_ROT_90 depending on which way is "Up"
+    lv_disp_set_rotation(display_, LV_DISP_ROTATION_90); // added; usbport down
+
     if (display_ == nullptr) {
         ESP_LOGE(TAG, "Failed to add display");
         return;
@@ -377,9 +392,8 @@ void LcdDisplay::SetupUI() {
     lv_obj_set_flex_flow(container_, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_all(container_, 0, 0);
     lv_obj_set_style_border_width(container_, 0, 0);
-    lv_obj_set_style_pad_row(container_, 0, 0);
+    lv_obj_set_style_pad_row(container_, 0, 0); 
     lv_obj_set_style_bg_color(container_, lvgl_theme->background_color(), 0);
-    // lv_obj_set_style_bg_opa(container_, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_color(container_, lvgl_theme->border_color(), 0);
 
     /* Layer 1: Top bar - for status icons */
@@ -425,7 +439,7 @@ void LcdDisplay::SetupUI() {
     lv_obj_set_style_margin_left(battery_label_, lvgl_theme->spacing(2), 0);
 
     /* Layer 2: Status bar - for center text labels */
-    status_bar_ = lv_obj_create(container_);
+    status_bar_ = lv_obj_create(screen);
     lv_obj_set_size(status_bar_, LV_HOR_RES, LV_SIZE_CONTENT);
     lv_obj_set_style_radius(status_bar_, 0, 0);
     lv_obj_set_style_bg_opa(status_bar_, LV_OPA_TRANSP, 0);  // Transparent background
@@ -434,6 +448,8 @@ void LcdDisplay::SetupUI() {
     lv_obj_set_style_pad_top(status_bar_, lvgl_theme->spacing(2), 0);
     lv_obj_set_style_pad_bottom(status_bar_, lvgl_theme->spacing(2), 0);
     lv_obj_set_scrollbar_mode(status_bar_, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_style_layout(status_bar_, LV_LAYOUT_NONE, 0);  // Use absolute positioning
+    lv_obj_align(status_bar_, LV_ALIGN_TOP_MID, 0, 0);  // Overlap with top_bar_
 
     notification_label_ = lv_label_create(status_bar_);
     lv_obj_set_width(notification_label_, LV_HOR_RES * 0.8);
@@ -450,88 +466,118 @@ void LcdDisplay::SetupUI() {
     lv_obj_set_style_text_color(status_label_, lvgl_theme->text_color(), 0);
     lv_label_set_text(status_label_, Lang::Strings::INITIALIZING);
     lv_obj_align(status_label_, LV_ALIGN_CENTER, 0, 0);
+/* --- SECTION 2: EMOJI AREA (Insert this BEFORE Content) --- */
+    // 1. Create a reserved space for the Emoji so bubbles can't cover it
+    lv_obj_t* emoji_area = lv_obj_create(container_);
+    lv_obj_set_width(emoji_area, LV_HOR_RES);
+    lv_obj_set_height(emoji_area, 120); // Fixed height (adjust to fit your GIF size)
+    lv_obj_set_flex_grow(emoji_area, 0); // Do NOT grow, keep fixed size
     
-    /* Content - Chat area */
-    content_ = lv_obj_create(container_);
-    lv_obj_set_style_radius(content_, 0, 0);
-    lv_obj_set_width(content_, LV_HOR_RES);
-    lv_obj_set_flex_grow(content_, 1);
-    lv_obj_set_style_pad_all(content_, lvgl_theme->spacing(4), 0);
-    lv_obj_set_style_border_width(content_, 0, 0);
-    lv_obj_set_style_bg_color(content_, lvgl_theme->chat_background_color(), 0); // Background for chat area
-    // lv_obj_set_style_bg_opa(content_, LV_OPA_TRANSP, 0);
+    // Style: Transparent and no scrollbars
+    lv_obj_set_style_bg_opa(emoji_area, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(emoji_area, 0, 0);
+    lv_obj_set_style_pad_all(emoji_area, 0, 0);
+    lv_obj_set_scrollbar_mode(emoji_area, LV_SCROLLBAR_MODE_OFF);
 
-    // Enable scrolling for chat content
-    lv_obj_set_scrollbar_mode(content_, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_scroll_dir(content_, LV_DIR_VER);
-    
-    // Create a flex container for chat messages
-    lv_obj_set_flex_flow(content_, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(content_, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-    lv_obj_set_style_pad_row(content_, lvgl_theme->spacing(4), 0); // Space between messages
+    // 2. Create the Emoji Image inside this new area
+    // Note: We change parent from 'screen' to 'emoji_area'
+    emoji_image_ = lv_img_create(emoji_area);
+    lv_obj_center(emoji_image_); // Center it inside the reserved box
 
-    // We'll create chat messages dynamically in SetChatMessage
-    chat_message_label_ = nullptr;
-
-    // We'll create chat messages dynamically in SetChatMessage
-    chat_message_label_ = nullptr;
-
-    // Create emoji container
-    emoji_container_ = lv_obj_create(container_);
-    lv_obj_set_size(emoji_container_, LV_HOR_RES, LV_SIZE_CONTENT); // Take full width, content-sized height
-    lv_obj_set_style_radius(emoji_container_, 0, 0);
-    lv_obj_set_style_bg_opa(emoji_container_, LV_OPA_TRANSP, 0); // Transparent background
-    lv_obj_set_style_border_width(emoji_container_, 0, 0);
-    lv_obj_set_style_pad_all(emoji_container_, lvgl_theme->spacing(4), 0);
-    lv_obj_set_flex_flow(emoji_container_, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(emoji_container_, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-
-    // Create emoji image inside emoji container
-    emoji_image_ = lv_img_create(emoji_container_);
-    lv_obj_center(emoji_image_); // Center within its container
-    lv_obj_add_flag(emoji_image_, LV_OBJ_FLAG_HIDDEN); // Initially hidden
-
-    // Display AI logo while booting
-    emoji_label_ = lv_label_create(emoji_container_);
-    lv_obj_center(emoji_label_); // Center within its container
+    // 3. Create the Boot Logo (Text) inside this new area
+    emoji_label_ = lv_label_create(emoji_area);
+    lv_obj_center(emoji_label_);
     lv_obj_set_style_text_font(emoji_label_, large_icon_font, 0);
     lv_obj_set_style_text_color(emoji_label_, lvgl_theme->text_color(), 0);
     lv_label_set_text(emoji_label_, FONT_AWESOME_MICROCHIP_AI);
 
-    /* Content - Chat area */
+    ///////////////////////////////////////////////////
+    /* --- SECTION 3: CHAT CONTENT (Created AFTER Emoji Area) --- */
     content_ = lv_obj_create(container_);
-    lv_obj_set_style_radius(content_, 0, 0);
     lv_obj_set_width(content_, LV_HOR_RES);
-    lv_obj_set_flex_grow(content_, 1);
+    
+    // CRITICAL: This makes the chat fill all remaining space at the bottom
+    lv_obj_set_flex_grow(content_, 1); 
+
+    // Styling
+    lv_obj_set_style_radius(content_, 0, 0);
     lv_obj_set_style_pad_all(content_, lvgl_theme->spacing(4), 0);
     lv_obj_set_style_border_width(content_, 0, 0);
-    lv_obj_set_style_bg_color(content_, lvgl_theme->chat_background_color(), 0); // Background for chat area
-    // lv_obj_set_style_bg_opa(content_, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_bg_opa(content_, LV_OPA_TRANSP, 0); // Transparent background
 
     // Enable scrolling for chat content
     lv_obj_set_scrollbar_mode(content_, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_scroll_dir(content_, LV_DIR_VER);
     
-    // Create a flex container for chat messages
+    // Flex container for chat messages
     lv_obj_set_flex_flow(content_, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(content_, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-    lv_obj_set_style_pad_row(content_, lvgl_theme->spacing(4), 0); // Space between messages
+    lv_obj_set_style_pad_row(content_, lvgl_theme->spacing(4), 0);
 
-    // We'll create chat messages dynamically in SetChatMessage
+    // Initialize message pointer
     chat_message_label_ = nullptr;
 
-    low_battery_popup_ = lv_obj_create(container_);
+
+    /* --- POPUPS (Keep attached to 'screen' so they float on top) --- */
+    low_battery_popup_ = lv_obj_create(screen);
     lv_obj_set_scrollbar_mode(low_battery_popup_, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_size(low_battery_popup_, LV_HOR_RES * 0.9, text_font->line_height * 2);
     lv_obj_align(low_battery_popup_, LV_ALIGN_BOTTOM_MID, 0, -lvgl_theme->spacing(4));
     lv_obj_set_style_bg_color(low_battery_popup_, lvgl_theme->low_battery_color(), 0);
     lv_obj_set_style_radius(low_battery_popup_, lvgl_theme->spacing(4), 0);
+    
     low_battery_label_ = lv_label_create(low_battery_popup_);
     lv_label_set_text(low_battery_label_, Lang::Strings::BATTERY_NEED_CHARGE);
     lv_obj_set_style_text_color(low_battery_label_, lv_color_white(), 0);
     lv_obj_center(low_battery_label_);
     lv_obj_add_flag(low_battery_popup_, LV_OBJ_FLAG_HIDDEN);
 }
+    ///////////////////////////////////////////////////    
+
+    // /* Content - Chat area */
+    // content_ = lv_obj_create(container_);
+    // lv_obj_set_style_radius(content_, 0, 0);
+    // lv_obj_set_width(content_, LV_HOR_RES);
+    // lv_obj_set_flex_grow(content_, 1);
+    // lv_obj_set_style_pad_all(content_, lvgl_theme->spacing(4), 0);
+    // lv_obj_set_style_border_width(content_, 0, 0);
+    // lv_obj_set_style_bg_color(content_, lvgl_theme->chat_background_color(), 0); // Background for chat area
+
+//     
+//     // Enable scrolling for chat content
+//     lv_obj_set_scrollbar_mode(content_, LV_SCROLLBAR_MODE_OFF);
+//     lv_obj_set_scroll_dir(content_, LV_DIR_VER);
+    
+//     // Create a flex container for chat messages
+//     lv_obj_set_flex_flow(content_, LV_FLEX_FLOW_COLUMN);
+//     lv_obj_set_flex_align(content_, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+//     lv_obj_set_style_pad_row(content_, lvgl_theme->spacing(4), 0); // Space between messages
+
+//     // We'll create chat messages dynamically in SetChatMessage
+//     chat_message_label_ = nullptr;
+
+//     low_battery_popup_ = lv_obj_create(screen);
+//     lv_obj_set_scrollbar_mode(low_battery_popup_, LV_SCROLLBAR_MODE_OFF);
+//     lv_obj_set_size(low_battery_popup_, LV_HOR_RES * 0.9, text_font->line_height * 2);
+//     lv_obj_align(low_battery_popup_, LV_ALIGN_BOTTOM_MID, 0, -lvgl_theme->spacing(4));
+//     lv_obj_set_style_bg_color(low_battery_popup_, lvgl_theme->low_battery_color(), 0);
+//     lv_obj_set_style_radius(low_battery_popup_, lvgl_theme->spacing(4), 0);
+//     low_battery_label_ = lv_label_create(low_battery_popup_);
+//     lv_label_set_text(low_battery_label_, Lang::Strings::BATTERY_NEED_CHARGE);
+//     lv_obj_set_style_text_color(low_battery_label_, lv_color_white(), 0);
+//     lv_obj_center(low_battery_label_);
+//     lv_obj_add_flag(low_battery_popup_, LV_OBJ_FLAG_HIDDEN);
+
+//     emoji_image_ = lv_img_create(screen);
+//     lv_obj_align(emoji_image_, LV_ALIGN_TOP_MID, 0, text_font->line_height + lvgl_theme->spacing(8));
+
+//     // Display AI logo while booting
+//     emoji_label_ = lv_label_create(screen);
+//     lv_obj_center(emoji_label_);
+//     lv_obj_set_style_text_font(emoji_label_, large_icon_font, 0);
+//     lv_obj_set_style_text_color(emoji_label_, lvgl_theme->text_color(), 0);
+//     lv_label_set_text(emoji_label_, FONT_AWESOME_MICROCHIP_AI);
+// }
 #if CONFIG_IDF_TARGET_ESP32P4
 #define  MAX_MESSAGES 40
 #else
@@ -577,7 +623,7 @@ void LcdDisplay::SetChatMessage(const char* role, const char* content) {
             }
         }
     } else {
-        // Hide the centered AI logo
+        // // Hide the centered AI logo
         // lv_obj_add_flag(emoji_label_, LV_OBJ_FLAG_HIDDEN);
     }
 
@@ -829,16 +875,14 @@ void LcdDisplay::SetupUI() {
     lv_obj_set_style_border_width(container_, 0, 0);
     lv_obj_set_style_bg_color(container_, lvgl_theme->background_color(), 0);
     lv_obj_set_style_border_color(container_, lvgl_theme->border_color(), 0);
-    // lv_obj_set_style_bg_opa(container_, LV_OPA_TRANSP, 0);
 
     /* Bottom layer: emoji_box_ - centered display */
     emoji_box_ = lv_obj_create(screen);
     lv_obj_set_size(emoji_box_, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
     lv_obj_set_style_bg_opa(emoji_box_, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_pad_all(emoji_box_, 0, 0);
+    lv_obj_set_style_pad_all(emoji_box_, 0, 0);
     lv_obj_set_style_border_width(emoji_box_, 0, 0);
-    // lv_obj_align(emoji_box_, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_align(emoji_box_, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_align(emoji_box_, LV_ALIGN_CENTER, 0, 0);
 
     emoji_label_ = lv_label_create(emoji_box_);
     lv_obj_set_style_text_font(emoji_label_, large_icon_font, 0);
@@ -1063,7 +1107,20 @@ void LcdDisplay::SetEmotion(const char* emotion) {
         lv_obj_remove_flag(emoji_image_, LV_OBJ_FLAG_HIDDEN);
     }
 
-
+#if CONFIG_USE_WECHAT_MESSAGE_STYLE
+    // In WeChat message style, if emotion is neutral, don't display it
+    uint32_t child_count = lv_obj_get_child_cnt(content_);
+    // if (strcmp(emotion, "neutral") == 0 && child_count > 0) {
+    //     // Stop GIF animation if running
+    //     if (gif_controller_) {
+    //         gif_controller_->Stop();
+    //         gif_controller_.reset();
+    //     }
+        
+    //     lv_obj_add_flag(emoji_image_, LV_OBJ_FLAG_HIDDEN);
+    //     lv_obj_add_flag(emoji_label_, LV_OBJ_FLAG_HIDDEN);
+    // }
+#endif
 }
 
 void LcdDisplay::SetTheme(Theme* theme) {
