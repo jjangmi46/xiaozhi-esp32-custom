@@ -42,7 +42,8 @@ class FreenoveESP32S3Display : public WifiBoard {
   esp_lcd_touch_handle_t touch_handle_ = nullptr;
   
   // Track touch state to detect a "Release" (Tap)
-  bool last_touch_state_ = false;
+    // Replace last_touch_state_ with this:
+  int touch_press_count_ = 0; 
 
   void InitializeSpi() {
     spi_bus_config_t buscfg = {};
@@ -100,71 +101,87 @@ class FreenoveESP32S3Display : public WifiBoard {
       ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_bus_cfg, &codec_i2c_bus_));
   }
 
-  // --- LVGL v9 TOUCH INPUT CALLBACK ---
+// --- LVGL v9 TOUCH INPUT CALLBACK ---
   static void lvgl_touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
-      // Get pointer to our class instance
       auto* board = (FreenoveESP32S3Display*)lv_indev_get_user_data(indev);
-      
+      if (board->touch_handle_ == nullptr) return;
+
       esp_lcd_touch_point_data_t point;
       uint8_t tp_num = 0;
 
-      esp_lcd_touch_read_data(board->touch_handle_);
-      esp_err_t err = esp_lcd_touch_get_data(board->touch_handle_, &point, &tp_num, 1);
+      // 1. Update data from hardware
+      esp_err_t read_err = esp_lcd_touch_read_data(board->touch_handle_);
+      esp_err_t data_err = esp_lcd_touch_get_data(board->touch_handle_, &point, &tp_num, 1);
 
-      bool currently_touched = (err == ESP_OK && tp_num > 0);
+      bool currently_touched = (read_err == ESP_OK && data_err == ESP_OK && tp_num > 0);
 
       if (currently_touched) {
           data->point.x = point.x;
           data->point.y = point.y;
           data->state = LV_INDEV_STATE_PRESSED;
+          board->touch_press_count_++; // Increment how many frames we've been held down
       } else {
           data->state = LV_INDEV_STATE_RELEASED;
-      }
-
-      // Logic: Trigger chatbot on "Release" (completing a tap)
-      if (board->last_touch_state_ == true && currently_touched == false) {
-          ESP_LOGI(TAG, "Screen Tap Detected - Mimicking Boot Button");
-          auto &app = Application::GetInstance();
           
-          // Check for WiFi reset condition (same as your button logic)
-          if (app.GetDeviceState() == kDeviceStateStarting &&
-              !WifiStation::GetInstance().IsConnected()) {
-            board->ResetWifiConfiguration();
+          // 2. Debounced Tap Logic:
+          // Trigger ONLY if the finger was held for at least 2 frames (prevents ghost spikes)
+          // but less than 30 frames (prevents triggers on long hold/drag)
+          if (board->touch_press_count_ >= 2 && board->touch_press_count_ < 30) {
+              ESP_LOGI(TAG, "Validated Screen Tap Detected (%d frames)", board->touch_press_count_);
+              auto &app = Application::GetInstance();
+              if (app.GetDeviceState() == kDeviceStateStarting &&
+                  !WifiStation::GetInstance().IsConnected()) {
+                board->ResetWifiConfiguration();
+              }
+              app.ToggleChatState();
           }
-          app.ToggleChatState();
+          board->touch_press_count_ = 0; // Reset counter
       }
-
-      board->last_touch_state_ = currently_touched;
   }
 
   void InitializeTouch() {
-    ESP_LOGI(TAG, "Initializing FT6336 Touch...");
+    ESP_LOGI(TAG, "Initializing FT6336 Touch (Stable Mode)...");
+
+    // 1. Configure INT pin with internal pull-up to prevent floating triggers
+    gpio_config_t io_conf = {};
+    io_conf.intr_type = GPIO_INTR_DISABLE;
+    io_conf.mode = GPIO_MODE_INPUT;
+    io_conf.pin_bit_mask = (1ULL << TOUCH_INT_PIN);
+    io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
+    io_conf.pull_up_en = GPIO_PULLUP_ENABLE;
+    gpio_config(&io_conf);
+
+    // 2. Setup I2C at 100kHz (Standard Mode) for better noise immunity
+    esp_lcd_panel_io_i2c_config_t tp_io_config = {};
+    tp_io_config.dev_addr = TOUCH_I2C_ADDRESS;
+    tp_io_config.scl_speed_hz = 100000; // Lower speed = higher reliability on shared bus
+    tp_io_config.control_phase_bytes = 1;
+    tp_io_config.dc_bit_offset = 0;
+    tp_io_config.lcd_cmd_bits = 8;
+    tp_io_config.lcd_param_bits = 8;
 
     esp_lcd_panel_io_handle_t tp_io_handle = NULL;
-    esp_lcd_panel_io_i2c_config_t tp_io_config = ESP_LCD_TOUCH_IO_I2C_FT5x06_CONFIG();
-    tp_io_config.dev_addr = TOUCH_I2C_ADDRESS;
-
     ESP_ERROR_CHECK(esp_lcd_new_panel_io_i2c(codec_i2c_bus_, &tp_io_config, &tp_io_handle));
 
+    // 3. Configure the touch driver
     esp_lcd_touch_config_t touch_config = {};
     touch_config.x_max = DISPLAY_WIDTH;
     touch_config.y_max = DISPLAY_HEIGHT;
     touch_config.rst_gpio_num = GPIO_NUM_NC;
-    touch_config.int_gpio_num = TOUCH_INT_PIN;
+    touch_config.int_gpio_num = TOUCH_INT_PIN; // 17
     touch_config.levels.reset = 0;
-    touch_config.levels.interrupt = 0;
+    touch_config.levels.interrupt = 0; // FT6336 pulls low on touch
+    
     touch_config.flags.swap_xy = DISPLAY_SWAP_XY;
     touch_config.flags.mirror_x = DISPLAY_MIRROR_X;
     touch_config.flags.mirror_y = DISPLAY_MIRROR_Y;
 
     ESP_ERROR_CHECK(esp_lcd_touch_new_i2c_ft5x06(tp_io_handle, &touch_config, &touch_handle_));
 
-    // --- LVGL v9 Registration ---
+    // 4. Register with LVGL 9
     lv_indev_t *indev = lv_indev_create();
     lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
     lv_indev_set_read_cb(indev, lvgl_touch_read_cb);
-    
-    // IMPORTANT: Pass 'this' so the callback can access board variables
     lv_indev_set_user_data(indev, this);
   }
 
