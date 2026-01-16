@@ -109,25 +109,26 @@ class FreenoveESP32S3Display : public WifiBoard {
       esp_lcd_touch_point_data_t point;
       uint8_t tp_num = 0;
 
-      // 1. Update data from hardware
-      esp_err_t read_err = esp_lcd_touch_read_data(board->touch_handle_);
-      esp_err_t data_err = esp_lcd_touch_get_data(board->touch_handle_, &point, &tp_num, 1);
+      // 1. Force the driver to read from I2C
+      esp_err_t err = esp_lcd_touch_read_data(board->touch_handle_);
+      
+      // 2. Get the actual data
+      bool touched = (esp_lcd_touch_get_data(board->touch_handle_, &point, &tp_num, 1) == ESP_OK && tp_num > 0);
 
-      bool currently_touched = (read_err == ESP_OK && data_err == ESP_OK && tp_num > 0);
-
-      if (currently_touched) {
+      if (touched) {
+          // Log coordinates once to verify it works
+          ESP_LOGD(TAG, "Touch Raw: X=%d, Y=%d", point.x, point.y);
+          
           data->point.x = point.x;
           data->point.y = point.y;
           data->state = LV_INDEV_STATE_PRESSED;
-          board->touch_press_count_++; // Increment how many frames we've been held down
+          board->touch_press_count_++;
       } else {
           data->state = LV_INDEV_STATE_RELEASED;
           
-          // 2. Debounced Tap Logic:
-          // Trigger ONLY if the finger was held for at least 2 frames (prevents ghost spikes)
-          // but less than 30 frames (prevents triggers on long hold/drag)
-          if (board->touch_press_count_ >= 2 && board->touch_press_count_ < 30) {
-              ESP_LOGI(TAG, "Validated Screen Tap Detected (%d frames)", board->touch_press_count_);
+          // Trigger if held for more than 1 frame (debounce) but less than 1 second
+          if (board->touch_press_count_ > 1 && board->touch_press_count_ < 50) {
+              ESP_LOGI(TAG, "Validated Screen Tap Detected!");
               auto &app = Application::GetInstance();
               if (app.GetDeviceState() == kDeviceStateStarting &&
                   !WifiStation::GetInstance().IsConnected()) {
@@ -135,26 +136,20 @@ class FreenoveESP32S3Display : public WifiBoard {
               }
               app.ToggleChatState();
           }
-          board->touch_press_count_ = 0; // Reset counter
+          board->touch_press_count_ = 0;
       }
   }
 
   void InitializeTouch() {
-    ESP_LOGI(TAG, "Initializing FT6336 Touch (Stable Mode)...");
+    ESP_LOGI(TAG, "Initializing FT6336 Touch (Diagnostic Mode)...");
 
-    // 1. Configure INT pin with internal pull-up to prevent floating triggers
-    gpio_config_t io_conf = {};
-    io_conf.intr_type = GPIO_INTR_DISABLE;
-    io_conf.mode = GPIO_MODE_INPUT;
-    io_conf.pin_bit_mask = (1ULL << TOUCH_INT_PIN);
-    io_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
-    io_conf.pull_up_en = GPIO_PULLUP_ENABLE;
-    gpio_config(&io_conf);
-
-    // 2. Setup I2C at 100kHz (Standard Mode) for better noise immunity
+    // 1. Manually check if I2C device at 0x38 exists
+    // (This helps verify the hardware is wired correctly)
+    
+    // 2. Configure I2C IO (Back to 400kHz for compatibility with Audio)
     esp_lcd_panel_io_i2c_config_t tp_io_config = {};
-    tp_io_config.dev_addr = TOUCH_I2C_ADDRESS;
-    tp_io_config.scl_speed_hz = 100000; // Lower speed = higher reliability on shared bus
+    tp_io_config.dev_addr = TOUCH_I2C_ADDRESS; // 0x38
+    tp_io_config.scl_speed_hz = 400000; 
     tp_io_config.control_phase_bytes = 1;
     tp_io_config.dc_bit_offset = 0;
     tp_io_config.lcd_cmd_bits = 8;
@@ -167,22 +162,33 @@ class FreenoveESP32S3Display : public WifiBoard {
     esp_lcd_touch_config_t touch_config = {};
     touch_config.x_max = DISPLAY_WIDTH;
     touch_config.y_max = DISPLAY_HEIGHT;
-    touch_config.rst_gpio_num = GPIO_NUM_NC;
-    touch_config.int_gpio_num = TOUCH_INT_PIN; // 17
-    touch_config.levels.reset = 0;
-    touch_config.levels.interrupt = 0; // FT6336 pulls low on touch
+    touch_config.rst_gpio_num = GPIO_NUM_NC; 
     
+    // We set this to NC (Not Connected) inside the driver config 
+    // This forces the driver to poll via I2C instead of waiting for a hardware interrupt
+    touch_config.int_gpio_num = GPIO_NUM_NC; 
+    
+    touch_config.levels.reset = 0;
+    touch_config.levels.interrupt = 0;
+    
+    // Freenove 2.8" usually needs these to align with the screen
     touch_config.flags.swap_xy = DISPLAY_SWAP_XY;
     touch_config.flags.mirror_x = DISPLAY_MIRROR_X;
     touch_config.flags.mirror_y = DISPLAY_MIRROR_Y;
 
-    ESP_ERROR_CHECK(esp_lcd_touch_new_i2c_ft5x06(tp_io_handle, &touch_config, &touch_handle_));
+    esp_err_t ret = esp_lcd_touch_new_i2c_ft5x06(tp_io_handle, &touch_config, &touch_handle_);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize FT5x06 driver (0x%x)", ret);
+        return;
+    }
 
     // 4. Register with LVGL 9
     lv_indev_t *indev = lv_indev_create();
     lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
     lv_indev_set_read_cb(indev, lvgl_touch_read_cb);
     lv_indev_set_user_data(indev, this);
+    
+    ESP_LOGI(TAG, "Touch initialization complete.");
   }
 
   void InitializeButtons() {
