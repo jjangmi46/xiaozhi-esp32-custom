@@ -190,6 +190,30 @@ class FreenoveESP32S3Display : public WifiBoard {
     InitializeTools(); 
     GetBacklight()->SetBrightness(100);
   }
+
+  void InitializeTools() {
+      auto& mcp_server = McpServer::GetInstance();
+
+      mcp_server.AddTool("self.get_weather", 
+        "Get local weather.", 
+        PropertyList({ Property("location", kPropertyTypeString, "City name") }), 
+        [this](const PropertyList& properties) -> ReturnValue {
+            std::string location = properties["location"].value<std::string>();
+            GetDisplay()->SetChatMessage("assistant", ("Checking weather for " + location).c_str());
+            return "Weather tool executed."; 
+        });
+
+      mcp_server.AddTool("self.music_player.play", 
+        "Play music URL.", 
+        PropertyList({ Property("url", kPropertyTypeString, "URL") }), 
+        [this](const PropertyList& properties) -> ReturnValue {
+            GetDisplay()->SetChatMessage("assistant", "Playing music...");
+            GetDisplay()->SetEmotion("music");
+            return "Music started.";
+        });
+  }
+  
+
   virtual Led *GetLed() override { 
       static SingleLed led(BUILTIN_LED_GPIO); 
       return &led; 
