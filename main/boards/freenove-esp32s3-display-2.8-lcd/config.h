@@ -26,14 +26,6 @@
 #define AUDIO_CODEC_I2C_SDA_PIN  GPIO_NUM_16
 #define AUDIO_CODEC_ES8311_ADDR  ES8311_CODEC_DEFAULT_ADDR
 
-// --- ADD THIS SECTION ---
-// Touch Screen Pins (Standard Freenove ESP32-S3 Pinout)
-#define TOUCH_I2C_NUM           I2C_NUM_1  // Use I2C_1 (Audio uses I2C_0)
-#define TOUCH_I2C_SDA           GPIO_NUM_2
-#define TOUCH_I2C_SCL           GPIO_NUM_1
-#define TOUCH_RST               GPIO_NUM_NC // Often NC on these kits
-#define TOUCH_INT               GPIO_NUM_NC // Polling mode is safer if pin unknown
-
 //boot引脚
 #define BOOT_BUTTON_GPIO GPIO_NUM_0
 #define BUILTIN_LED_GPIO GPIO_NUM_42

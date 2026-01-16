@@ -1,10 +1,13 @@
-//mcp motor control claude
 #include <driver/i2c_master.h>
 #include <driver/spi_common.h>
-
 #include "esp_lcd_panel_vendor.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_ops.h"
+
+// Add these for Touch
+#include "esp_lcd_touch_ft5x06.h"
+#include "lvgl.h"
+
 #include "wifi_station.h"
 #include "application.h"
 #include "audio/codecs/es8311_audio_codec.h"
@@ -17,13 +20,14 @@
 #include <driver/ledc.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
-#include <math.h>
-
-// ... your other includes ...
 #include "wifi_board.h"
 #include "mcp_server.h"
 #include "config.h"
 #include "esp_lcd_ili9341.h"
+
+// Touch Pins as per your hardware
+#define TOUCH_INT_PIN       GPIO_NUM_17
+#define TOUCH_I2C_ADDRESS   0x38
 
 #define TAG "FreenoveBoard"
 
@@ -35,6 +39,7 @@ class FreenoveESP32S3Display : public WifiBoard {
   Button boot_button_;
   LcdDisplay *display_;
   i2c_master_bus_handle_t codec_i2c_bus_;
+  esp_lcd_touch_handle_t touch_handle_ = nullptr;
 
   void InitializeSpi() {
     spi_bus_config_t buscfg = {};
@@ -51,7 +56,6 @@ class FreenoveESP32S3Display : public WifiBoard {
     esp_lcd_panel_io_handle_t panel_io = nullptr;
     esp_lcd_panel_handle_t panel = nullptr;
 
-    ESP_LOGD(TAG, "Install panel IO");
     esp_lcd_panel_io_spi_config_t io_config = {};
     io_config.cs_gpio_num = DISPLAY_CS_PIN;
     io_config.dc_gpio_num = DISPLAY_DC_PIN;
@@ -62,14 +66,13 @@ class FreenoveESP32S3Display : public WifiBoard {
     io_config.lcd_param_bits = 8;
     ESP_ERROR_CHECK(esp_lcd_new_panel_io_spi(LCD_SPI_HOST, &io_config, &panel_io));
     
-    ESP_LOGD(TAG, "Install LCD driver");
     esp_lcd_panel_dev_config_t panel_config = {};
     panel_config.reset_gpio_num = DISPLAY_RST_PIN;
     panel_config.rgb_ele_order = DISPLAY_RGB_ORDER;
     panel_config.bits_per_pixel = 16;
     ESP_ERROR_CHECK(esp_lcd_new_panel_ili9341(panel_io, &panel_config, &panel));
+    
     esp_lcd_panel_reset(panel);
-
     esp_lcd_panel_init(panel);
     esp_lcd_panel_invert_color(panel, DISPLAY_INVERT_COLOR);
     esp_lcd_panel_swap_xy(panel, DISPLAY_SWAP_XY);
@@ -83,8 +86,8 @@ class FreenoveESP32S3Display : public WifiBoard {
   void InitializeI2c() {
       i2c_master_bus_config_t i2c_bus_cfg = {
           .i2c_port = AUDIO_CODEC_I2C_NUM,
-          .sda_io_num = AUDIO_CODEC_I2C_SDA_PIN,
-          .scl_io_num = AUDIO_CODEC_I2C_SCL_PIN,
+          .sda_io_num = AUDIO_CODEC_I2C_SDA_PIN, // GPIO 16
+          .scl_io_num = AUDIO_CODEC_I2C_SCL_PIN, // GPIO 15
           .clk_source = I2C_CLK_SRC_DEFAULT,
           .glitch_ignore_cnt = 7,
           .intr_priority = 0,
@@ -94,13 +97,65 @@ class FreenoveESP32S3Display : public WifiBoard {
       ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_bus_cfg, &codec_i2c_bus_));
   }
 
+  // --- LVGL v9 TOUCH INPUT CALLBACK ---
+  static void lvgl_touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
+      esp_lcd_touch_handle_t touch_handle = (esp_lcd_touch_handle_t)lv_indev_get_user_data(indev);
+      
+      // The new API uses this structure to hold touch information
+      esp_lcd_touch_point_data_t point;
+      uint8_t tp_num = 0;
+
+      // Read data from the hardware
+      esp_lcd_touch_read_data(touch_handle);
+      
+      // Get the first touch point (max_point_cnt = 1)
+      esp_err_t err = esp_lcd_touch_get_data(touch_handle, &point, &tp_num, 1);
+
+      if (err == ESP_OK && tp_num > 0) {
+          data->point.x = point.x;
+          data->point.y = point.y;
+          data->state = LV_INDEV_STATE_PRESSED;
+          // Optional: ESP_LOGD(TAG, "Touch: x=%d, y=%d", point.x, point.y);
+      } else {
+          data->state = LV_INDEV_STATE_RELEASED;
+      }
+  }
+
+  void InitializeTouch() {
+      ESP_LOGI(TAG, "Initializing FT6336 Touch...");
+
+      esp_lcd_panel_io_handle_t tp_io_handle = NULL;
+      esp_lcd_panel_io_i2c_config_t tp_io_config = ESP_LCD_TOUCH_IO_I2C_FT5x06_CONFIG();
+      tp_io_config.dev_addr = TOUCH_I2C_ADDRESS; // 0x38
+
+      // Use the existing codec_i2c_bus_ (Bus 0, Pins 15/16)
+      ESP_ERROR_CHECK(esp_lcd_new_panel_io_i2c(codec_i2c_bus_, &tp_io_config, &tp_io_handle));
+
+      esp_lcd_touch_config_t touch_config = {};
+      touch_config.x_max = DISPLAY_WIDTH;
+      touch_config.y_max = DISPLAY_HEIGHT;
+      touch_config.rst_gpio_num = GPIO_NUM_NC;
+      touch_config.int_gpio_num = TOUCH_INT_PIN; // GPIO 17
+      touch_config.levels.reset = 0;
+      touch_config.levels.interrupt = 0;
+      
+      // These must match your display settings for alignment
+      touch_config.flags.swap_xy = DISPLAY_SWAP_XY;
+      touch_config.flags.mirror_x = DISPLAY_MIRROR_X;
+      touch_config.flags.mirror_y = DISPLAY_MIRROR_Y;
+
+      ESP_ERROR_CHECK(esp_lcd_touch_new_i2c_ft5x06(tp_io_handle, &touch_config, &touch_handle_));
+
+      // --- LVGL v9 Registration ---
+      lv_indev_t *indev = lv_indev_create();
+      lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
+      lv_indev_set_read_cb(indev, lvgl_touch_read_cb);
+      lv_indev_set_user_data(indev, touch_handle_);
+  }
+
   void InitializeButtons() {
     boot_button_.OnClick([this]() {
       auto &app = Application::GetInstance();
-      if (app.GetDeviceState() == kDeviceStateStarting &&
-          !WifiStation::GetInstance().IsConnected()) {
-        ResetWifiConfiguration();
-      }
       app.ToggleChatState();
     });
   }
@@ -111,17 +166,14 @@ class FreenoveESP32S3Display : public WifiBoard {
     InitializeI2c();
     InitializeSpi();
     InitializeLcdDisplay();
+    InitializeTouch();
     InitializeButtons();
     InitializeTools(); 
     GetBacklight()->SetBrightness(100);
-    
-
   }
 
   void InitializeTools() {
       auto& mcp_server = McpServer::GetInstance();
-
-
 
       mcp_server.AddTool("self.get_weather", 
         "Get local weather.", 
