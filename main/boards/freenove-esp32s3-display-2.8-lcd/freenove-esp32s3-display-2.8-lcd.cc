@@ -581,7 +581,7 @@
 
 // DECLARE_BOARD(FreenoveESP32S3Display);
 
-// mcp motor control claude
+//mcp motor control claude
 #include <driver/i2c_master.h>
 #include <driver/spi_common.h>
 
