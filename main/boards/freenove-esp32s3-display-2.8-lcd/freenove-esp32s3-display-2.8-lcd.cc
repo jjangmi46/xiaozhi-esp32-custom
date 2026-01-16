@@ -40,6 +40,9 @@ class FreenoveESP32S3Display : public WifiBoard {
   LcdDisplay *display_;
   i2c_master_bus_handle_t codec_i2c_bus_;
   esp_lcd_touch_handle_t touch_handle_ = nullptr;
+  
+  // Track touch state to detect a "Release" (Tap)
+  bool last_touch_state_ = false;
 
   void InitializeSpi() {
     spi_bus_config_t buscfg = {};
@@ -86,8 +89,8 @@ class FreenoveESP32S3Display : public WifiBoard {
   void InitializeI2c() {
       i2c_master_bus_config_t i2c_bus_cfg = {
           .i2c_port = AUDIO_CODEC_I2C_NUM,
-          .sda_io_num = AUDIO_CODEC_I2C_SDA_PIN, // GPIO 16
-          .scl_io_num = AUDIO_CODEC_I2C_SCL_PIN, // GPIO 15
+          .sda_io_num = AUDIO_CODEC_I2C_SDA_PIN,
+          .scl_io_num = AUDIO_CODEC_I2C_SCL_PIN,
           .clk_source = I2C_CLK_SRC_DEFAULT,
           .glitch_ignore_cnt = 7,
           .intr_priority = 0,
@@ -99,63 +102,79 @@ class FreenoveESP32S3Display : public WifiBoard {
 
   // --- LVGL v9 TOUCH INPUT CALLBACK ---
   static void lvgl_touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
-      esp_lcd_touch_handle_t touch_handle = (esp_lcd_touch_handle_t)lv_indev_get_user_data(indev);
+      // Get pointer to our class instance
+      auto* board = (FreenoveESP32S3Display*)lv_indev_get_user_data(indev);
       
-      // The new API uses this structure to hold touch information
       esp_lcd_touch_point_data_t point;
       uint8_t tp_num = 0;
 
-      // Read data from the hardware
-      esp_lcd_touch_read_data(touch_handle);
-      
-      // Get the first touch point (max_point_cnt = 1)
-      esp_err_t err = esp_lcd_touch_get_data(touch_handle, &point, &tp_num, 1);
+      esp_lcd_touch_read_data(board->touch_handle_);
+      esp_err_t err = esp_lcd_touch_get_data(board->touch_handle_, &point, &tp_num, 1);
 
-      if (err == ESP_OK && tp_num > 0) {
+      bool currently_touched = (err == ESP_OK && tp_num > 0);
+
+      if (currently_touched) {
           data->point.x = point.x;
           data->point.y = point.y;
           data->state = LV_INDEV_STATE_PRESSED;
-          // Optional: ESP_LOGD(TAG, "Touch: x=%d, y=%d", point.x, point.y);
       } else {
           data->state = LV_INDEV_STATE_RELEASED;
       }
+
+      // Logic: Trigger chatbot on "Release" (completing a tap)
+      if (board->last_touch_state_ == true && currently_touched == false) {
+          ESP_LOGI(TAG, "Screen Tap Detected - Mimicking Boot Button");
+          auto &app = Application::GetInstance();
+          
+          // Check for WiFi reset condition (same as your button logic)
+          if (app.GetDeviceState() == kDeviceStateStarting &&
+              !WifiStation::GetInstance().IsConnected()) {
+            board->ResetWifiConfiguration();
+          }
+          app.ToggleChatState();
+      }
+
+      board->last_touch_state_ = currently_touched;
   }
 
   void InitializeTouch() {
-      ESP_LOGI(TAG, "Initializing FT6336 Touch...");
+    ESP_LOGI(TAG, "Initializing FT6336 Touch...");
 
-      esp_lcd_panel_io_handle_t tp_io_handle = NULL;
-      esp_lcd_panel_io_i2c_config_t tp_io_config = ESP_LCD_TOUCH_IO_I2C_FT5x06_CONFIG();
-      tp_io_config.dev_addr = TOUCH_I2C_ADDRESS; // 0x38
+    esp_lcd_panel_io_handle_t tp_io_handle = NULL;
+    esp_lcd_panel_io_i2c_config_t tp_io_config = ESP_LCD_TOUCH_IO_I2C_FT5x06_CONFIG();
+    tp_io_config.dev_addr = TOUCH_I2C_ADDRESS;
 
-      // Use the existing codec_i2c_bus_ (Bus 0, Pins 15/16)
-      ESP_ERROR_CHECK(esp_lcd_new_panel_io_i2c(codec_i2c_bus_, &tp_io_config, &tp_io_handle));
+    ESP_ERROR_CHECK(esp_lcd_new_panel_io_i2c(codec_i2c_bus_, &tp_io_config, &tp_io_handle));
 
-      esp_lcd_touch_config_t touch_config = {};
-      touch_config.x_max = DISPLAY_WIDTH;
-      touch_config.y_max = DISPLAY_HEIGHT;
-      touch_config.rst_gpio_num = GPIO_NUM_NC;
-      touch_config.int_gpio_num = TOUCH_INT_PIN; // GPIO 17
-      touch_config.levels.reset = 0;
-      touch_config.levels.interrupt = 0;
-      
-      // These must match your display settings for alignment
-      touch_config.flags.swap_xy = DISPLAY_SWAP_XY;
-      touch_config.flags.mirror_x = DISPLAY_MIRROR_X;
-      touch_config.flags.mirror_y = DISPLAY_MIRROR_Y;
+    esp_lcd_touch_config_t touch_config = {};
+    touch_config.x_max = DISPLAY_WIDTH;
+    touch_config.y_max = DISPLAY_HEIGHT;
+    touch_config.rst_gpio_num = GPIO_NUM_NC;
+    touch_config.int_gpio_num = TOUCH_INT_PIN;
+    touch_config.levels.reset = 0;
+    touch_config.levels.interrupt = 0;
+    touch_config.flags.swap_xy = DISPLAY_SWAP_XY;
+    touch_config.flags.mirror_x = DISPLAY_MIRROR_X;
+    touch_config.flags.mirror_y = DISPLAY_MIRROR_Y;
 
-      ESP_ERROR_CHECK(esp_lcd_touch_new_i2c_ft5x06(tp_io_handle, &touch_config, &touch_handle_));
+    ESP_ERROR_CHECK(esp_lcd_touch_new_i2c_ft5x06(tp_io_handle, &touch_config, &touch_handle_));
 
-      // --- LVGL v9 Registration ---
-      lv_indev_t *indev = lv_indev_create();
-      lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
-      lv_indev_set_read_cb(indev, lvgl_touch_read_cb);
-      lv_indev_set_user_data(indev, touch_handle_);
+    // --- LVGL v9 Registration ---
+    lv_indev_t *indev = lv_indev_create();
+    lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_read_cb(indev, lvgl_touch_read_cb);
+    
+    // IMPORTANT: Pass 'this' so the callback can access board variables
+    lv_indev_set_user_data(indev, this);
   }
 
   void InitializeButtons() {
     boot_button_.OnClick([this]() {
       auto &app = Application::GetInstance();
+      if (app.GetDeviceState() == kDeviceStateStarting &&
+          !WifiStation::GetInstance().IsConnected()) {
+        ResetWifiConfiguration();
+      }
       app.ToggleChatState();
     });
   }
@@ -171,30 +190,6 @@ class FreenoveESP32S3Display : public WifiBoard {
     InitializeTools(); 
     GetBacklight()->SetBrightness(100);
   }
-
-  void InitializeTools() {
-      auto& mcp_server = McpServer::GetInstance();
-
-      mcp_server.AddTool("self.get_weather", 
-        "Get local weather.", 
-        PropertyList({ Property("location", kPropertyTypeString, "City name") }), 
-        [this](const PropertyList& properties) -> ReturnValue {
-            std::string location = properties["location"].value<std::string>();
-            GetDisplay()->SetChatMessage("assistant", ("Checking weather for " + location).c_str());
-            return "Weather tool executed."; 
-        });
-
-      mcp_server.AddTool("self.music_player.play", 
-        "Play music URL.", 
-        PropertyList({ Property("url", kPropertyTypeString, "URL") }), 
-        [this](const PropertyList& properties) -> ReturnValue {
-            GetDisplay()->SetChatMessage("assistant", "Playing music...");
-            GetDisplay()->SetEmotion("music");
-            return "Music started.";
-        });
-  }
-  
-
   virtual Led *GetLed() override { 
       static SingleLed led(BUILTIN_LED_GPIO); 
       return &led; 
