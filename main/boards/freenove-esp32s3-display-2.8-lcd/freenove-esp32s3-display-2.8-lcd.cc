@@ -4,9 +4,9 @@
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_ops.h"
 
-// Add these for Touch
+// Touch support
 #include "esp_lcd_touch_ft5x06.h"
-#include "lvgl.h"
+#include <sys/time.h>
 
 #include "wifi_station.h"
 #include "application.h"
@@ -25,9 +25,15 @@
 #include "config.h"
 #include "esp_lcd_ili9341.h"
 
-// Touch Pins as per your hardware
+// Touch Pins (FT6336G) - from lcdwiki.com specs
+#define TOUCH_RST_PIN       GPIO_NUM_18
 #define TOUCH_INT_PIN       GPIO_NUM_17
 #define TOUCH_I2C_ADDRESS   0x38
+
+// Touch detection timing (microseconds)
+#define TOUCH_POLL_INTERVAL_MS   30
+#define TAP_MAX_DURATION_US      300000   // Max 300ms for a tap (vs long press)
+#define MULTI_TAP_WINDOW_US      400000   // 400ms window to detect multi-tap sequence
 
 #define TAG "FreenoveBoard"
 
@@ -40,10 +46,12 @@ class FreenoveESP32S3Display : public WifiBoard {
   LcdDisplay *display_;
   i2c_master_bus_handle_t codec_i2c_bus_;
   esp_lcd_touch_handle_t touch_handle_ = nullptr;
-  
-  // Track touch state to detect a "Release" (Tap)
-    // Replace last_touch_state_ with this:
-  int touch_press_count_ = 0; 
+
+  // Touch state tracking for multi-tap detection
+  bool is_touching_ = false;
+  int64_t touch_start_time_ = 0;
+  int64_t last_release_time_ = 0;
+  int tap_count_ = 0; 
 
   void InitializeSpi() {
     spi_bus_config_t buscfg = {};
@@ -101,55 +109,126 @@ class FreenoveESP32S3Display : public WifiBoard {
       ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_bus_cfg, &codec_i2c_bus_));
   }
 
-// --- LVGL v9 TOUCH INPUT CALLBACK ---
-  static void lvgl_touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
-      auto* board = (FreenoveESP32S3Display*)lv_indev_get_user_data(indev);
-      if (board->touch_handle_ == nullptr) return;
+  // Helper to get current time in microseconds
+  static int64_t GetCurrentTimeUs() {
+      struct timeval tv;
+      gettimeofday(&tv, nullptr);
+      return (int64_t)tv.tv_sec * 1000000L + tv.tv_usec;
+  }
 
-      esp_lcd_touch_point_data_t point;
-      uint8_t tp_num = 0;
+  // Touch daemon task - runs continuously polling touch and detecting taps
+  static void TouchDaemon(void* arg) {
+      auto* board = static_cast<FreenoveESP32S3Display*>(arg);
+      int debug_counter = 0;
 
-      // 1. Force the driver to read from I2C
-      esp_err_t err = esp_lcd_touch_read_data(board->touch_handle_);
-      
-      // 2. Get the actual data
-      bool touched = (esp_lcd_touch_get_data(board->touch_handle_, &point, &tp_num, 1) == ESP_OK && tp_num > 0);
-
-      if (touched) {
-          // Log coordinates once to verify it works
-          ESP_LOGD(TAG, "Touch Raw: X=%d, Y=%d", point.x, point.y);
-          
-          data->point.x = point.x;
-          data->point.y = point.y;
-          data->state = LV_INDEV_STATE_PRESSED;
-          board->touch_press_count_++;
-      } else {
-          data->state = LV_INDEV_STATE_RELEASED;
-          
-          // Trigger if held for more than 1 frame (debounce) but less than 1 second
-          if (board->touch_press_count_ > 1 && board->touch_press_count_ < 50) {
-              ESP_LOGI(TAG, "Validated Screen Tap Detected!");
-              auto &app = Application::GetInstance();
-              if (app.GetDeviceState() == kDeviceStateStarting &&
-                  !WifiStation::GetInstance().IsConnected()) {
-                board->ResetWifiConfiguration();
-              }
-              app.ToggleChatState();
+      while (true) {
+          if (board->touch_handle_ == nullptr) {
+              vTaskDelay(pdMS_TO_TICKS(100));
+              continue;
           }
-          board->touch_press_count_ = 0;
+
+          // Read touch data from I2C
+          esp_err_t read_err = esp_lcd_touch_read_data(board->touch_handle_);
+
+          // Get touch point data
+          uint16_t x = 0, y = 0;
+          uint16_t strength = 0;
+          uint8_t tp_num = 0;
+          bool touched = esp_lcd_touch_get_coordinates(board->touch_handle_, &x, &y, &strength, &tp_num, 1);
+
+          // Debug logging every ~3 seconds when not touching
+          if (++debug_counter >= 100) {
+              debug_counter = 0;
+              ESP_LOGI(TAG, "Touch poll: read_err=%d, touched=%d, tp_num=%d", read_err, touched, tp_num);
+          }
+
+          // Log immediately when touch detected
+          if (touched && tp_num > 0) {
+              ESP_LOGI(TAG, "TOUCH: x=%d, y=%d, strength=%d, tp_num=%d", x, y, strength, tp_num);
+          }
+
+          int64_t now = GetCurrentTimeUs();
+          bool is_touched = touched && tp_num > 0;
+
+          // State machine for tap detection
+          if (is_touched && !board->is_touching_) {
+              // Touch just started
+              board->is_touching_ = true;
+              board->touch_start_time_ = now;
+              ESP_LOGI(TAG, "Touch started at (%d, %d)", x, y);
+          }
+          else if (!is_touched && board->is_touching_) {
+              // Touch just released
+              board->is_touching_ = false;
+              int64_t duration = now - board->touch_start_time_;
+
+              // Only count as tap if it was short enough (not a long press)
+              if (duration <= TAP_MAX_DURATION_US) {
+                  board->tap_count_++;
+                  board->last_release_time_ = now;
+                  ESP_LOGI(TAG, "Tap #%d detected (duration: %lldms)", board->tap_count_, duration / 1000);
+              } else {
+                  ESP_LOGI(TAG, "Long press ignored (duration: %lldms)", duration / 1000);
+              }
+          }
+          else if (!is_touched && !board->is_touching_ && board->tap_count_ > 0) {
+              // Not touching, but we have pending taps - check if window expired
+              if (now - board->last_release_time_ >= MULTI_TAP_WINDOW_US) {
+                  // Multi-tap window expired, process the tap count
+                  int taps = board->tap_count_;
+                  board->tap_count_ = 0;
+
+                  ESP_LOGI(TAG, "Processing %d tap(s)", taps);
+
+                  auto& app = Application::GetInstance();
+                  auto display = Board::GetInstance().GetDisplay();
+
+                  if (taps == 1) {
+                      // Single tap: Toggle chat state (start/stop listening)
+                      if (app.GetDeviceState() == kDeviceStateStarting &&
+                          !WifiStation::GetInstance().IsConnected()) {
+                          board->ResetWifiConfiguration();
+                      } else {
+                          app.ToggleChatState();
+                      }
+                  }
+                  else if (taps >= 4) {
+                      // 4+ taps: Irritated response
+                      ESP_LOGI(TAG, "Irritated! (4+ taps detected)");
+                      display->SetEmotion("angry");
+                      display->SetChatMessage("assistant", "Stop tapping me so much!");
+                  }
+                  // 2-3 taps: ignored or add custom behavior here
+              }
+          }
+
+          vTaskDelay(pdMS_TO_TICKS(TOUCH_POLL_INTERVAL_MS));
       }
   }
 
   void InitializeTouch() {
-    ESP_LOGI(TAG, "Initializing FT6336 Touch (Diagnostic Mode)...");
+    ESP_LOGI(TAG, "Initializing FT6336 Touch...");
 
-    // 1. Manually check if I2C device at 0x38 exists
-    // (This helps verify the hardware is wired correctly)
-    
-    // 2. Configure I2C IO (Back to 400kHz for compatibility with Audio)
+    // Hardware reset the touch controller first
+    gpio_config_t rst_gpio_config = {
+        .pin_bit_mask = (1ULL << TOUCH_RST_PIN),
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&rst_gpio_config);
+
+    // Reset sequence: LOW -> delay -> HIGH -> delay
+    gpio_set_level(TOUCH_RST_PIN, 0);
+    vTaskDelay(pdMS_TO_TICKS(10));
+    gpio_set_level(TOUCH_RST_PIN, 1);
+    vTaskDelay(pdMS_TO_TICKS(50));  // Wait for touch controller to boot
+
+    // Configure I2C IO for touch controller
     esp_lcd_panel_io_i2c_config_t tp_io_config = {};
     tp_io_config.dev_addr = TOUCH_I2C_ADDRESS; // 0x38
-    tp_io_config.scl_speed_hz = 400000; 
+    tp_io_config.scl_speed_hz = 400000;
     tp_io_config.control_phase_bytes = 1;
     tp_io_config.dc_bit_offset = 0;
     tp_io_config.lcd_cmd_bits = 8;
@@ -158,20 +237,14 @@ class FreenoveESP32S3Display : public WifiBoard {
     esp_lcd_panel_io_handle_t tp_io_handle = NULL;
     ESP_ERROR_CHECK(esp_lcd_new_panel_io_i2c(codec_i2c_bus_, &tp_io_config, &tp_io_handle));
 
-    // 3. Configure the touch driver
+    // Configure the touch driver
     esp_lcd_touch_config_t touch_config = {};
     touch_config.x_max = DISPLAY_WIDTH;
     touch_config.y_max = DISPLAY_HEIGHT;
-    touch_config.rst_gpio_num = GPIO_NUM_NC; 
-    
-    // We set this to NC (Not Connected) inside the driver config 
-    // This forces the driver to poll via I2C instead of waiting for a hardware interrupt
-    touch_config.int_gpio_num = GPIO_NUM_NC; 
-    
+    touch_config.rst_gpio_num = GPIO_NUM_NC;  // We handle reset manually above
+    touch_config.int_gpio_num = GPIO_NUM_NC;  // Polling mode
     touch_config.levels.reset = 0;
     touch_config.levels.interrupt = 0;
-    
-    // Freenove 2.8" usually needs these to align with the screen
     touch_config.flags.swap_xy = DISPLAY_SWAP_XY;
     touch_config.flags.mirror_x = DISPLAY_MIRROR_X;
     touch_config.flags.mirror_y = DISPLAY_MIRROR_Y;
@@ -182,12 +255,9 @@ class FreenoveESP32S3Display : public WifiBoard {
         return;
     }
 
-    // 4. Register with LVGL 9
-    lv_indev_t *indev = lv_indev_create();
-    lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
-    lv_indev_set_read_cb(indev, lvgl_touch_read_cb);
-    lv_indev_set_user_data(indev, this);
-    
+    // Start touch daemon for tap detection
+    xTaskCreate(TouchDaemon, "touch_daemon", 3072, this, 5, NULL);
+
     ESP_LOGI(TAG, "Touch initialization complete.");
   }
 
