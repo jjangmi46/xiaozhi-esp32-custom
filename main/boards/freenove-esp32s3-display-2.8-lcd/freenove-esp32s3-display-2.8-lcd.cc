@@ -127,35 +127,34 @@ class FreenoveESP32S3Display : public WifiBoard {
               continue;
           }
 
-          // Read touch data from I2C
-          esp_err_t read_err = esp_lcd_touch_read_data(board->touch_handle_);
+          // Use interrupt pin to detect touch (LOW = touching, HIGH = not touching)
+          int int_level = gpio_get_level(TOUCH_INT_PIN);
+          bool is_touched = (int_level == 0);
 
-          // Get touch point data
+          // Only read coordinates when actually touching
           uint16_t x = 0, y = 0;
-          uint16_t strength = 0;
-          uint8_t tp_num = 0;
-          bool touched = esp_lcd_touch_get_coordinates(board->touch_handle_, &x, &y, &strength, &tp_num, 1);
-
-          // Debug logging every ~3 seconds when not touching
-          if (++debug_counter >= 100) {
-              debug_counter = 0;
-              ESP_LOGI(TAG, "Touch poll: read_err=%d, touched=%d, tp_num=%d", read_err, touched, tp_num);
+          if (is_touched) {
+              esp_lcd_touch_read_data(board->touch_handle_);
+              uint16_t strength = 0;
+              uint8_t tp_num = 0;
+              esp_lcd_touch_get_coordinates(board->touch_handle_, &x, &y, &strength, &tp_num, 1);
           }
 
-          // Log immediately when touch detected
-          if (touched && tp_num > 0) {
-              ESP_LOGI(TAG, "TOUCH: x=%d, y=%d, strength=%d, tp_num=%d", x, y, strength, tp_num);
+          // Debug logging every ~3 seconds
+          if (++debug_counter >= 100) {
+              debug_counter = 0;
+              ESP_LOGI(TAG, "Touch poll: INT=%d, is_touched=%d, is_touching=%d, taps=%d",
+                       int_level, is_touched, board->is_touching_, board->tap_count_);
           }
 
           int64_t now = GetCurrentTimeUs();
-          bool is_touched = touched && tp_num > 0;
 
           // State machine for tap detection
           if (is_touched && !board->is_touching_) {
               // Touch just started
               board->is_touching_ = true;
               board->touch_start_time_ = now;
-              ESP_LOGI(TAG, "Touch started at (%d, %d)", x, y);
+              ESP_LOGW(TAG, ">>> TOUCH START at (%d, %d)", x, y);
           }
           else if (!is_touched && board->is_touching_) {
               // Touch just released
@@ -209,7 +208,7 @@ class FreenoveESP32S3Display : public WifiBoard {
   void InitializeTouch() {
     ESP_LOGI(TAG, "Initializing FT6336 Touch...");
 
-    // Hardware reset the touch controller first
+    // Configure touch reset pin
     gpio_config_t rst_gpio_config = {
         .pin_bit_mask = (1ULL << TOUCH_RST_PIN),
         .mode = GPIO_MODE_OUTPUT,
@@ -219,7 +218,17 @@ class FreenoveESP32S3Display : public WifiBoard {
     };
     gpio_config(&rst_gpio_config);
 
-    // Reset sequence: LOW -> delay -> HIGH -> delay
+    // Configure touch interrupt pin as input (LOW = touched)
+    gpio_config_t int_gpio_config = {
+        .pin_bit_mask = (1ULL << TOUCH_INT_PIN),
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&int_gpio_config);
+
+    // Hardware reset sequence: LOW -> delay -> HIGH -> delay
     gpio_set_level(TOUCH_RST_PIN, 0);
     vTaskDelay(pdMS_TO_TICKS(10));
     gpio_set_level(TOUCH_RST_PIN, 1);
