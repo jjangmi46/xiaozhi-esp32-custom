@@ -18,6 +18,7 @@
 
 #include <esp_log.h>
 #include <driver/ledc.h>
+#include <driver/uart.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include "wifi_board.h"
@@ -32,8 +33,8 @@
 
 // Touch detection timing
 #define TOUCH_POLL_INTERVAL_MS   15       // Poll every 15ms (balanced responsiveness vs CPU)
-#define TAP_MAX_DURATION_US      800000   // Max 800ms for a tap
-#define MULTI_TAP_WINDOW_US      350000   // 350ms window to detect multi-tap sequence
+#define TAP_MAX_DURATION_US      1000000   // Max 800ms for a tap
+#define MULTI_TAP_WINDOW_US      400000   // 350ms window to detect multi-tap sequence
 
 #define TAG "FreenoveBoard"
 
@@ -187,9 +188,14 @@ class FreenoveESP32S3Display : public WifiBoard {
                   }
                   else if (taps >= 4) {
                       // 4+ taps: Irritated response
-                      ESP_LOGI(TAG, "Irritated! (4+ taps detected)");
+                      ESP_LOGI(TAG, "Irritated! (%d taps detected)", taps);
                       display->SetEmotion("angry");
                       display->SetChatMessage("assistant", "Stop tapping me so much!");
+
+                      // Send motor signal over UART1
+                      const char* uart_msg = "E:angry\n";
+                      uart_write_bytes(UART_NUM_1, uart_msg, strlen(uart_msg));
+                      ESP_LOGI(TAG, "Sent UART: E:angry");
                   }
                   // 2-3 taps: ignored or add custom behavior here
               }
