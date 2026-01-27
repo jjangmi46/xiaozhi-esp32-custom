@@ -49,6 +49,7 @@ class FreenoveESP32S3Display : public WifiBoard {
   esp_timer_handle_t tap_timer_ = nullptr;
   esp_timer_handle_t angry_revert_timer_ = nullptr;
   int tap_count_ = 0;
+  bool first_multi_tap_ = true;
 
   void InitializeSpi() {
     spi_bus_config_t buscfg = {};
@@ -137,13 +138,14 @@ class FreenoveESP32S3Display : public WifiBoard {
           }
       }
       else if (taps >= 4) {
-          // 4+ taps: Randomly pick tickled (funny) or irritated (angry)
-          bool tickled = (esp_random() % 3) != 0;  // ~67% tickled, ~33% angry
+          // 4+ taps: First time always tickled, then random
+          bool tickled = board->first_multi_tap_ || (esp_random() % 3) != 0;
+          board->first_multi_tap_ = false;
 
           if (tickled) {
               ESP_LOGI(TAG, "Tickled! (%d taps detected)", taps);
               display->SetEmotion("funny");
-              display->SetChatMessage("assistant", "Hahaha stop it, that tickles!");
+              // display->SetChatMessage("assistant", "Hahaha stop it, that tickles!");
 
               const char* uart_msg = "E:funny\n";
               uart_write_bytes(UART_NUM_1, uart_msg, strlen(uart_msg));
@@ -151,7 +153,7 @@ class FreenoveESP32S3Display : public WifiBoard {
           } else {
               ESP_LOGI(TAG, "Irritated! (%d taps detected)", taps);
               display->SetEmotion("angry");
-              display->SetChatMessage("assistant", "Stop tapping me so much!");
+              // display->SetChatMessage("assistant", "Stop tapping me so much!");
 
               const char* uart_msg = "E:angry\n";
               uart_write_bytes(UART_NUM_1, uart_msg, strlen(uart_msg));
