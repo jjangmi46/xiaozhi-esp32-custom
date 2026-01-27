@@ -137,15 +137,26 @@ class FreenoveESP32S3Display : public WifiBoard {
           }
       }
       else if (taps >= 4) {
-          // 4+ taps: Irritated response
-          ESP_LOGI(TAG, "Irritated! (%d taps detected)", taps);
-          display->SetEmotion("angry");
-          display->SetChatMessage("assistant", "Stop tapping me so much!");
+          // 4+ taps: Randomly pick tickled (funny) or irritated (angry)
+          bool tickled = (esp_random() % 3) != 0;  // ~67% tickled, ~33% angry
 
-          // Send motor signal over UART1
-          const char* uart_msg = "E:angry\n";
-          uart_write_bytes(UART_NUM_1, uart_msg, strlen(uart_msg));
-          ESP_LOGI(TAG, "Sent UART: E:angry");
+          if (tickled) {
+              ESP_LOGI(TAG, "Tickled! (%d taps detected)", taps);
+              display->SetEmotion("funny");
+              display->SetChatMessage("assistant", "Hahaha stop it, that tickles!");
+
+              const char* uart_msg = "E:funny\n";
+              uart_write_bytes(UART_NUM_1, uart_msg, strlen(uart_msg));
+              ESP_LOGI(TAG, "Sent UART: E:funny");
+          } else {
+              ESP_LOGI(TAG, "Irritated! (%d taps detected)", taps);
+              display->SetEmotion("angry");
+              display->SetChatMessage("assistant", "Stop tapping me so much!");
+
+              const char* uart_msg = "E:angry\n";
+              uart_write_bytes(UART_NUM_1, uart_msg, strlen(uart_msg));
+              ESP_LOGI(TAG, "Sent UART: E:angry");
+          }
 
           // Revert to neutral after 3 seconds
           esp_timer_stop(board->angry_revert_timer_);
