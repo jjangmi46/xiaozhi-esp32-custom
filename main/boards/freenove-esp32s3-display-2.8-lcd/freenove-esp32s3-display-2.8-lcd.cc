@@ -33,8 +33,8 @@
 
 // Touch detection timing
 #define TOUCH_POLL_INTERVAL_MS   15       // Poll every 15ms (balanced responsiveness vs CPU)
-#define TAP_MAX_DURATION_US      1000000   // Max 800ms for a tap
-#define MULTI_TAP_WINDOW_US      400000   // 350ms window to detect multi-tap sequence
+#define TAP_MAX_DURATION_US      500000   // Max 500ms for a tap (longer = long press, not a tap)
+#define MULTI_TAP_WINDOW_US      400000   // 400ms window to detect multi-tap sequence
 
 #define TAG "FreenoveBoard"
 
@@ -128,23 +128,19 @@ class FreenoveESP32S3Display : public WifiBoard {
               continue;
           }
 
-          // Use interrupt pin to detect touch (LOW = touching, HIGH = not touching)
-          int int_level = gpio_get_level(TOUCH_INT_PIN);
-          bool is_touched = (int_level == 0);
+          // Always read I2C data to keep the FT6336 controller state fresh.
+          // However, use the INT pin for actual touch state — tp_num from
+          // get_coordinates() returns stale cached data (always 1) on FT6336.
+          esp_lcd_touch_read_data(board->touch_handle_);
 
-          // Only read coordinates when actually touching
-          uint16_t x = 0, y = 0;
-          if (is_touched) {
-              esp_lcd_touch_read_data(board->touch_handle_);
-              uint16_t strength = 0;
-              uint8_t tp_num = 0;
-              esp_lcd_touch_get_coordinates(board->touch_handle_, &x, &y, &strength, &tp_num, 1);
-          }
+          bool is_touched = (gpio_get_level(TOUCH_INT_PIN) == 0);
 
-          // Debug logging every ~10 seconds (reduced spam)
-          if (++debug_counter >= 666) {
+          // Debug logging every ~5 seconds
+          if (++debug_counter >= 333) {
               debug_counter = 0;
-              ESP_LOGD(TAG, "Touch: INT=%d, taps=%d", int_level, board->tap_count_);
+              ESP_LOGI(TAG, "Touch poll: INT=%d, touched=%d, touching=%d, taps=%d",
+                       gpio_get_level(TOUCH_INT_PIN), is_touched,
+                       board->is_touching_, board->tap_count_);
           }
 
           int64_t now = GetCurrentTimeUs();
@@ -154,17 +150,19 @@ class FreenoveESP32S3Display : public WifiBoard {
               // Touch just started
               board->is_touching_ = true;
               board->touch_start_time_ = now;
+              ESP_LOGI(TAG, "Touch DOWN");
           }
           else if (!is_touched && board->is_touching_) {
               // Touch just released
               board->is_touching_ = false;
               int64_t duration = now - board->touch_start_time_;
+              ESP_LOGI(TAG, "Touch UP (%dms)", (int)(duration / 1000));
 
               // Only count as tap if it was short enough (not a long press)
               if (duration <= TAP_MAX_DURATION_US) {
                   board->tap_count_++;
                   board->last_release_time_ = now;
-                  ESP_LOGD(TAG, "Tap #%d (%dms)", board->tap_count_, (int)(duration / 1000));
+                  ESP_LOGI(TAG, "Tap #%d registered", board->tap_count_);
               }
           }
           else if (!is_touched && !board->is_touching_ && board->tap_count_ > 0) {
@@ -173,6 +171,7 @@ class FreenoveESP32S3Display : public WifiBoard {
                   // Multi-tap window expired, process the tap count
                   int taps = board->tap_count_;
                   board->tap_count_ = 0;
+                  ESP_LOGI(TAG, "Processing %d tap(s)", taps);
 
                   auto& app = Application::GetInstance();
                   auto display = Board::GetInstance().GetDisplay();
