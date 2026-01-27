@@ -6,7 +6,8 @@
 
 // Touch support
 #include "esp_lcd_touch_ft5x06.h"
-#include <sys/time.h>
+#include <esp_lvgl_port.h>
+#include <esp_timer.h>
 
 #include "wifi_station.h"
 #include "application.h"
@@ -28,12 +29,8 @@
 
 // Touch Pins (FT6336G) - from lcdwiki.com specs
 #define TOUCH_RST_PIN       GPIO_NUM_18
-#define TOUCH_INT_PIN       GPIO_NUM_17
-#define TOUCH_I2C_ADDRESS   0x38
 
-// Touch detection timing
-#define TOUCH_POLL_INTERVAL_MS   15       // Poll every 15ms (balanced responsiveness vs CPU)
-#define TAP_MAX_DURATION_US      500000   // Max 500ms for a tap (longer = long press, not a tap)
+// Multi-tap detection timing (microseconds)
 #define MULTI_TAP_WINDOW_US      400000   // 400ms window to detect multi-tap sequence
 
 #define TAG "FreenoveBoard"
@@ -48,11 +45,10 @@ class FreenoveESP32S3Display : public WifiBoard {
   i2c_master_bus_handle_t codec_i2c_bus_;
   esp_lcd_touch_handle_t touch_handle_ = nullptr;
 
-  // Touch state tracking for multi-tap detection
-  bool is_touching_ = false;
-  int64_t touch_start_time_ = 0;
-  int64_t last_release_time_ = 0;
-  int tap_count_ = 0; 
+  // Multi-tap detection
+  esp_timer_handle_t tap_timer_ = nullptr;
+  esp_timer_handle_t angry_revert_timer_ = nullptr;
+  int tap_count_ = 0;
 
   void InitializeSpi() {
     spi_bus_config_t buscfg = {};
@@ -110,104 +106,67 @@ class FreenoveESP32S3Display : public WifiBoard {
       ESP_ERROR_CHECK(i2c_new_master_bus(&i2c_bus_cfg, &codec_i2c_bus_));
   }
 
-  // Helper to get current time in microseconds
-  static int64_t GetCurrentTimeUs() {
-      struct timeval tv;
-      gettimeofday(&tv, nullptr);
-      return (int64_t)tv.tv_sec * 1000000L + tv.tv_usec;
+  // LVGL touch event callback — fires on each tap (click) on the screen
+  static void OnScreenClicked(lv_event_t* e) {
+      auto* board = static_cast<FreenoveESP32S3Display*>(lv_event_get_user_data(e));
+      board->tap_count_++;
+      ESP_LOGI(TAG, "Tap #%d detected", board->tap_count_);
+
+      // Reset/restart the multi-tap window timer
+      esp_timer_stop(board->tap_timer_);
+      esp_timer_start_once(board->tap_timer_, MULTI_TAP_WINDOW_US);
   }
 
-  // Touch daemon task - runs continuously polling touch and detecting taps
-  static void TouchDaemon(void* arg) {
+  // Timer callback — fires when multi-tap window expires, processes accumulated taps
+  static void OnTapTimerExpired(void* arg) {
       auto* board = static_cast<FreenoveESP32S3Display*>(arg);
-      int debug_counter = 0;
+      int taps = board->tap_count_;
+      board->tap_count_ = 0;
+      ESP_LOGI(TAG, "Processing %d tap(s)", taps);
 
-      while (true) {
-          if (board->touch_handle_ == nullptr) {
-              vTaskDelay(pdMS_TO_TICKS(100));
-              continue;
+      auto& app = Application::GetInstance();
+      auto display = Board::GetInstance().GetDisplay();
+
+      if (taps == 1) {
+          // Single tap: Toggle chat state (start/stop listening)
+          if (app.GetDeviceState() == kDeviceStateStarting &&
+              !WifiStation::GetInstance().IsConnected()) {
+              board->ResetWifiConfiguration();
+          } else {
+              app.ToggleChatState();
           }
-
-          // Always read I2C data to keep the FT6336 controller state fresh.
-          // However, use the INT pin for actual touch state — tp_num from
-          // get_coordinates() returns stale cached data (always 1) on FT6336.
-          esp_lcd_touch_read_data(board->touch_handle_);
-
-          bool is_touched = (gpio_get_level(TOUCH_INT_PIN) == 0);
-
-          // Debug logging every ~5 seconds
-          if (++debug_counter >= 333) {
-              debug_counter = 0;
-              ESP_LOGI(TAG, "Touch poll: INT=%d, touched=%d, touching=%d, taps=%d",
-                       gpio_get_level(TOUCH_INT_PIN), is_touched,
-                       board->is_touching_, board->tap_count_);
-          }
-
-          int64_t now = GetCurrentTimeUs();
-
-          // State machine for tap detection
-          if (is_touched && !board->is_touching_) {
-              // Touch just started
-              board->is_touching_ = true;
-              board->touch_start_time_ = now;
-              ESP_LOGI(TAG, "Touch DOWN");
-          }
-          else if (!is_touched && board->is_touching_) {
-              // Touch just released
-              board->is_touching_ = false;
-              int64_t duration = now - board->touch_start_time_;
-              ESP_LOGI(TAG, "Touch UP (%dms)", (int)(duration / 1000));
-
-              // Only count as tap if it was short enough (not a long press)
-              if (duration <= TAP_MAX_DURATION_US) {
-                  board->tap_count_++;
-                  board->last_release_time_ = now;
-                  ESP_LOGI(TAG, "Tap #%d registered", board->tap_count_);
-              }
-          }
-          else if (!is_touched && !board->is_touching_ && board->tap_count_ > 0) {
-              // Not touching, but we have pending taps - check if window expired
-              if (now - board->last_release_time_ >= MULTI_TAP_WINDOW_US) {
-                  // Multi-tap window expired, process the tap count
-                  int taps = board->tap_count_;
-                  board->tap_count_ = 0;
-                  ESP_LOGI(TAG, "Processing %d tap(s)", taps);
-
-                  auto& app = Application::GetInstance();
-                  auto display = Board::GetInstance().GetDisplay();
-
-                  if (taps == 1) {
-                      // Single tap: Toggle chat state (start/stop listening)
-                      if (app.GetDeviceState() == kDeviceStateStarting &&
-                          !WifiStation::GetInstance().IsConnected()) {
-                          board->ResetWifiConfiguration();
-                      } else {
-                          app.ToggleChatState();
-                      }
-                  }
-                  else if (taps >= 4) {
-                      // 4+ taps: Irritated response
-                      ESP_LOGI(TAG, "Irritated! (%d taps detected)", taps);
-                      display->SetEmotion("angry");
-                      display->SetChatMessage("assistant", "Stop tapping me so much!");
-
-                      // Send motor signal over UART1
-                      const char* uart_msg = "E:angry\n";
-                      uart_write_bytes(UART_NUM_1, uart_msg, strlen(uart_msg));
-                      ESP_LOGI(TAG, "Sent UART: E:angry");
-                  }
-                  // 2-3 taps: ignored or add custom behavior here
-              }
-          }
-
-          vTaskDelay(pdMS_TO_TICKS(TOUCH_POLL_INTERVAL_MS));
       }
+      else if (taps >= 4) {
+          // 4+ taps: Irritated response
+          ESP_LOGI(TAG, "Irritated! (%d taps detected)", taps);
+          display->SetEmotion("angry");
+          display->SetChatMessage("assistant", "Stop tapping me so much!");
+
+          // Send motor signal over UART1
+          const char* uart_msg = "E:angry\n";
+          uart_write_bytes(UART_NUM_1, uart_msg, strlen(uart_msg));
+          ESP_LOGI(TAG, "Sent UART: E:angry");
+
+          // Revert to neutral after 3 seconds
+          esp_timer_stop(board->angry_revert_timer_);
+          esp_timer_start_once(board->angry_revert_timer_, 3000000);
+      }
+      // 2-3 taps: ignored or add custom behavior here
+  }
+
+  // Timer callback — reverts display from angry state back to neutral
+  static void OnAngryRevert(void* arg) {
+      auto* board = static_cast<FreenoveESP32S3Display*>(arg);
+      auto display = Board::GetInstance().GetDisplay();
+      display->SetEmotion("neutral");
+      display->SetChatMessage("system", "");
+      ESP_LOGI(TAG, "Reverted from angry to neutral");
   }
 
   void InitializeTouch() {
     ESP_LOGI(TAG, "Initializing FT6336 Touch...");
 
-    // Configure touch reset pin
+    // Hardware reset the touch controller
     gpio_config_t rst_gpio_config = {
         .pin_bit_mask = (1ULL << TOUCH_RST_PIN),
         .mode = GPIO_MODE_OUTPUT,
@@ -216,46 +175,33 @@ class FreenoveESP32S3Display : public WifiBoard {
         .intr_type = GPIO_INTR_DISABLE,
     };
     gpio_config(&rst_gpio_config);
-
-    // Configure touch interrupt pin as input (LOW = touched)
-    gpio_config_t int_gpio_config = {
-        .pin_bit_mask = (1ULL << TOUCH_INT_PIN),
-        .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_ENABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE,
-    };
-    gpio_config(&int_gpio_config);
-
-    // Hardware reset sequence: LOW -> delay -> HIGH -> delay
     gpio_set_level(TOUCH_RST_PIN, 0);
     vTaskDelay(pdMS_TO_TICKS(10));
     gpio_set_level(TOUCH_RST_PIN, 1);
-    vTaskDelay(pdMS_TO_TICKS(50));  // Wait for touch controller to boot
+    vTaskDelay(pdMS_TO_TICKS(50));
 
-    // Configure I2C IO for touch controller
-    esp_lcd_panel_io_i2c_config_t tp_io_config = {};
-    tp_io_config.dev_addr = TOUCH_I2C_ADDRESS; // 0x38
-    tp_io_config.scl_speed_hz = 400000;
-    tp_io_config.control_phase_bytes = 1;
-    tp_io_config.dc_bit_offset = 0;
-    tp_io_config.lcd_cmd_bits = 8;
-    tp_io_config.lcd_param_bits = 8;
-
+    // Use standard FT5x06 I2C config (same as working esp32-s3-touch-lcd-3.5 board)
     esp_lcd_panel_io_handle_t tp_io_handle = NULL;
+    esp_lcd_panel_io_i2c_config_t tp_io_config = ESP_LCD_TOUCH_IO_I2C_FT5x06_CONFIG();
+    tp_io_config.scl_speed_hz = 400000;
     ESP_ERROR_CHECK(esp_lcd_new_panel_io_i2c(codec_i2c_bus_, &tp_io_config, &tp_io_handle));
 
     // Configure the touch driver
-    esp_lcd_touch_config_t touch_config = {};
-    touch_config.x_max = DISPLAY_WIDTH;
-    touch_config.y_max = DISPLAY_HEIGHT;
-    touch_config.rst_gpio_num = GPIO_NUM_NC;  // We handle reset manually above
-    touch_config.int_gpio_num = GPIO_NUM_NC;  // Polling mode
-    touch_config.levels.reset = 0;
-    touch_config.levels.interrupt = 0;
-    touch_config.flags.swap_xy = DISPLAY_SWAP_XY;
-    touch_config.flags.mirror_x = DISPLAY_MIRROR_X;
-    touch_config.flags.mirror_y = DISPLAY_MIRROR_Y;
+    esp_lcd_touch_config_t touch_config = {
+        .x_max = DISPLAY_WIDTH,
+        .y_max = DISPLAY_HEIGHT,
+        .rst_gpio_num = GPIO_NUM_NC,
+        .int_gpio_num = GPIO_NUM_NC,
+        .levels = {
+            .reset = 0,
+            .interrupt = 0,
+        },
+        .flags = {
+            .swap_xy = DISPLAY_SWAP_XY,
+            .mirror_x = DISPLAY_MIRROR_X,
+            .mirror_y = DISPLAY_MIRROR_Y,
+        },
+    };
 
     esp_err_t ret = esp_lcd_touch_new_i2c_ft5x06(tp_io_handle, &touch_config, &touch_handle_);
     if (ret != ESP_OK) {
@@ -263,8 +209,38 @@ class FreenoveESP32S3Display : public WifiBoard {
         return;
     }
 
-    // Start touch daemon for tap detection (low priority to not interfere with boot)
-    xTaskCreate(TouchDaemon, "touch_daemon", 3072, this, 2, NULL);
+    // Register touch with LVGL (same approach as working esp32-s3-touch-lcd-3.5 board)
+    const lvgl_port_touch_cfg_t touch_cfg = {
+        .disp = lv_display_get_default(),
+        .handle = touch_handle_,
+    };
+    lvgl_port_add_touch(&touch_cfg);
+
+    // Create multi-tap timer
+    esp_timer_create_args_t timer_args = {};
+    timer_args.callback = OnTapTimerExpired;
+    timer_args.arg = this;
+    timer_args.dispatch_method = ESP_TIMER_TASK;
+    timer_args.name = "tap_timer";
+    ESP_ERROR_CHECK(esp_timer_create(&timer_args, &tap_timer_));
+
+    // Create angry-revert timer (reverts display back to neutral after irritated response)
+    esp_timer_create_args_t angry_timer_args = {};
+    angry_timer_args.callback = OnAngryRevert;
+    angry_timer_args.arg = this;
+    angry_timer_args.dispatch_method = ESP_TIMER_TASK;
+    angry_timer_args.name = "angry_revert";
+    ESP_ERROR_CHECK(esp_timer_create(&angry_timer_args, &angry_revert_timer_));
+
+    // Add a full-screen clickable overlay on LVGL's top layer for tap detection
+    lvgl_port_lock(0);
+    lv_obj_t *touch_overlay = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(touch_overlay);
+    lv_obj_set_size(touch_overlay, lv_pct(100), lv_pct(100));
+    lv_obj_add_flag(touch_overlay, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(touch_overlay, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(touch_overlay, OnScreenClicked, LV_EVENT_CLICKED, this);
+    lvgl_port_unlock();
 
     ESP_LOGI(TAG, "Touch initialization complete.");
   }
