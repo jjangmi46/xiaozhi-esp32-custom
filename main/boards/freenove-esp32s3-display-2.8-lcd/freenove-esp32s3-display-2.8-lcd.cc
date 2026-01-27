@@ -245,11 +245,13 @@ class FreenoveESP32S3Display : public WifiBoard {
     angry_timer_args.name = "angry_revert";
     ESP_ERROR_CHECK(esp_timer_create(&angry_timer_args, &angry_revert_timer_));
 
-    // Add a full-screen clickable overlay on LVGL's top layer for tap detection
+    // Add tap overlay covering only the emoji area (top ~150px),
+    // leaving the chat bubble area below free for scrolling.
     lvgl_port_lock(0);
     lv_obj_t *touch_overlay = lv_obj_create(lv_layer_top());
     lv_obj_remove_style_all(touch_overlay);
-    lv_obj_set_size(touch_overlay, lv_pct(100), lv_pct(100));
+    lv_obj_set_size(touch_overlay, lv_pct(100), 150);
+    lv_obj_align(touch_overlay, LV_ALIGN_TOP_MID, 0, 0);
     lv_obj_add_flag(touch_overlay, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_clear_flag(touch_overlay, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(touch_overlay, OnScreenClicked, LV_EVENT_CLICKED, this);
