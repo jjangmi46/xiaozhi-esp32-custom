@@ -503,7 +503,8 @@ void LcdDisplay::SetupUI() {
     lv_obj_set_style_radius(content_, 0, 0);
     lv_obj_set_style_pad_all(content_, lvgl_theme->spacing(4), 0);
     lv_obj_set_style_border_width(content_, 0, 0);
-    lv_obj_set_style_bg_opa(content_, LV_OPA_TRANSP, 0); // Transparent background
+    lv_obj_set_style_bg_opa(content_, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(content_, lv_color_hex(0x1E1E1E), 0); // Dark gray, distinct from black emoji area
 
     // Enable scrolling for chat content
     lv_obj_set_scrollbar_mode(content_, LV_SCROLLBAR_MODE_OFF);
