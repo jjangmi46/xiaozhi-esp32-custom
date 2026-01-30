@@ -45,7 +45,7 @@ void LcdDisplay::InitializeLcdThemes() {
     auto dark_theme = new LvglTheme("dark");
     dark_theme->set_background_color(lv_color_hex(0x000000));
     dark_theme->set_text_color(lv_color_hex(0xFFFFFF));
-    dark_theme->set_chat_background_color(lv_color_hex(0x1F1F1F));
+    dark_theme->set_chat_background_color(lv_color_hex(0xE0E0E0));  // Light gray chat area in dark mode
     dark_theme->set_user_bubble_color(lv_color_hex(0x00FF00));
     dark_theme->set_assistant_bubble_color(lv_color_hex(0x222222));
     dark_theme->set_system_bubble_color(lv_color_hex(0x000000));
@@ -504,7 +504,7 @@ void LcdDisplay::SetupUI() {
     lv_obj_set_style_pad_all(content_, lvgl_theme->spacing(4), 0);
     lv_obj_set_style_border_width(content_, 0, 0);
     lv_obj_set_style_bg_opa(content_, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(content_, lv_color_hex(0x1E1E1E), 0); // Dark gray, distinct from black emoji area
+    lv_obj_set_style_bg_color(content_, lvgl_theme->chat_background_color(), 0);
 
     // Enable scrolling for chat content
     lv_obj_set_scrollbar_mode(content_, LV_SCROLLBAR_MODE_OFF);
