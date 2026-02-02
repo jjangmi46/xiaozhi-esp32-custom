@@ -1175,8 +1175,9 @@ void LcdDisplay::SetTheme(Theme* theme) {
 
     // If we have the chat message style, update all message bubbles
 #if CONFIG_USE_WECHAT_MESSAGE_STYLE
-    // Set content background opacity
-    lv_obj_set_style_bg_opa(content_, LV_OPA_TRANSP, 0);
+    // Set content background color (light gray distinct from emoji area)
+    lv_obj_set_style_bg_opa(content_, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(content_, lvgl_theme->chat_background_color(), 0);
 
     // Iterate through all children of content (message containers or bubbles)
     uint32_t child_count = lv_obj_get_child_cnt(content_);
