@@ -56,4 +56,13 @@
 #define DISPLAY_BACKLIGHT_OUTPUT_INVERT false
 #define DISPLAY_SPI_MODE      0
 
+// ESP-NOW Camera Node Configuration
+// Set this to the MAC address of your XIAO ESP32S3 camera node
+// You can find the MAC address by checking the serial output when the XIAO boots
+// Format: {0xXX, 0xXX, 0xXX, 0xXX, 0xXX, 0xXX}
+#define ESPNOW_CAMERA_PEER_MAC {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}  // Replace with actual MAC
+
+// Enable ESP-NOW camera support
+#define ESPNOW_CAMERA_ENABLED 1
+
 #endif  // _BOARD_CONFIG_H_

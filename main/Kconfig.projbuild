@@ -121,6 +121,12 @@ choice BOARD_TYPE
     config BOARD_TYPE_XIAO_ESP32S3_SENSE
         bool "XIAO ESP32S3 Sense (Seeed Studio)"
         depends on IDF_TARGET_ESP32S3
+    config BOARD_TYPE_XIAO_ESP32S3_CAMERA_NODE
+        bool "XIAO ESP32S3 Camera Node (ESP-NOW)"
+        depends on IDF_TARGET_ESP32S3
+        help
+            XIAO ESP32S3 Sense as a camera-only node that sends images via ESP-NOW.
+            Pair with another board (like Freenove) that has display but no camera.
     config BOARD_TYPE_MY_CUSTOM_BOARD2
         bool "freenove-esp32s3-display-2.8-lcd"
         depends on IDF_TARGET_ESP32S3  # 根据你的目标芯片修改

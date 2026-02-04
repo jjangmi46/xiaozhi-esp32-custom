@@ -51,6 +51,13 @@ public:
     virtual bool SetHMirror(bool enabled) override;
     virtual bool SetVFlip(bool enabled) override;
     virtual std::string Explain(const std::string& question);
+
+    // Frame data accessors for ESP-NOW transfer
+    const uint8_t* GetFrameData() const { return frame_.data; }
+    size_t GetFrameSize() const { return frame_.len; }
+    uint16_t GetFrameWidth() const { return frame_.width; }
+    uint16_t GetFrameHeight() const { return frame_.height; }
+    v4l2_pix_fmt_t GetFrameFormat() const { return frame_.format; }
 };
 
 #endif // ndef CONFIG_IDF_TARGET_ESP32

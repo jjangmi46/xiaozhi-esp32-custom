@@ -27,6 +27,10 @@
 #include "config.h"
 #include "esp_lcd_ili9341.h"
 
+#if ESPNOW_CAMERA_ENABLED
+#include "espnow_camera.h"
+#endif
+
 // Touch Pins (FT6336G) - from lcdwiki.com specs
 #define TOUCH_RST_PIN       GPIO_NUM_18
 
@@ -44,6 +48,9 @@ class FreenoveESP32S3Display : public WifiBoard {
   LcdDisplay *display_;
   i2c_master_bus_handle_t codec_i2c_bus_;
   esp_lcd_touch_handle_t touch_handle_ = nullptr;
+#if ESPNOW_CAMERA_ENABLED
+  EspNowCamera *camera_ = nullptr;
+#endif
 
   // Multi-tap detection
   esp_timer_handle_t tap_timer_ = nullptr;
@@ -271,6 +278,21 @@ class FreenoveESP32S3Display : public WifiBoard {
     });
   }
 
+#if ESPNOW_CAMERA_ENABLED
+  void InitializeEspNowCamera() {
+    ESP_LOGI(TAG, "Initializing ESP-NOW camera...");
+    static const uint8_t peer_mac[] = ESPNOW_CAMERA_PEER_MAC;
+    camera_ = new EspNowCamera(peer_mac);
+    if (!camera_->Initialize()) {
+      ESP_LOGE(TAG, "Failed to initialize ESP-NOW camera");
+      delete camera_;
+      camera_ = nullptr;
+    } else {
+      ESP_LOGI(TAG, "ESP-NOW camera initialized successfully");
+    }
+  }
+#endif
+
  public:
   FreenoveESP32S3Display(): boot_button_(BOOT_BUTTON_GPIO)
   {
@@ -279,7 +301,10 @@ class FreenoveESP32S3Display : public WifiBoard {
     InitializeLcdDisplay();
     InitializeTouch();
     InitializeButtons();
-    InitializeTools(); 
+    InitializeTools();
+#if ESPNOW_CAMERA_ENABLED
+    InitializeEspNowCamera();
+#endif
     GetBacklight()->SetBrightness(100);
   }
 
@@ -324,10 +349,16 @@ class FreenoveESP32S3Display : public WifiBoard {
       return display_; 
   }
   
-  virtual Backlight *GetBacklight() override { 
-      static PwmBacklight b(DISPLAY_BACKLIGHT_PIN, DISPLAY_BACKLIGHT_OUTPUT_INVERT); 
-      return &b; 
+  virtual Backlight *GetBacklight() override {
+      static PwmBacklight b(DISPLAY_BACKLIGHT_PIN, DISPLAY_BACKLIGHT_OUTPUT_INVERT);
+      return &b;
   }
+
+#if ESPNOW_CAMERA_ENABLED
+  virtual Camera *GetCamera() override {
+      return camera_;
+  }
+#endif
 };
 
 DECLARE_BOARD(FreenoveESP32S3Display);
