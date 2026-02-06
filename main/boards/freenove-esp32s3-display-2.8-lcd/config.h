@@ -56,4 +56,13 @@
 #define DISPLAY_BACKLIGHT_OUTPUT_INVERT false
 #define DISPLAY_SPI_MODE      0
 
+// UART Bridge to XIAO Camera Node
+// Connect: Freenove TX (GPIO2) -> XIAO RX (GPIO4)
+//          Freenove RX (GPIO21) <- XIAO TX (GPIO3)
+#define UART_BRIDGE_ENABLED   1
+#define UART_BRIDGE_PORT      UART_NUM_2
+#define UART_BRIDGE_TX_PIN    GPIO_NUM_2    // TX to XIAO RX
+#define UART_BRIDGE_RX_PIN    GPIO_NUM_21   // RX from XIAO TX
+#define UART_BRIDGE_BAUD      115200
+
 #endif  // _BOARD_CONFIG_H_

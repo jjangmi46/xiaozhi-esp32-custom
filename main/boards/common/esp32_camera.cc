@@ -383,6 +383,11 @@ void Esp32Camera::SetExplainUrl(const std::string& url, const std::string& token
     explain_token_ = token;
 }
 
+void Esp32Camera::SetCredentials(const std::string& device_id, const std::string& client_id) {
+    device_id_ = device_id;
+    client_id_ = client_id;
+}
+
 bool Esp32Camera::Capture() {
     if (encoder_thread_.joinable()) {
         encoder_thread_.join();
@@ -945,8 +950,11 @@ std::string Esp32Camera::Explain(const std::string& question) {
     std::string boundary = "----ESP32_CAMERA_BOUNDARY";
 
     // 配置HTTP客户端，使用分块传输编码
-    http->SetHeader("Device-Id", SystemInfo::GetMacAddress().c_str());
-    http->SetHeader("Client-Id", Board::GetInstance().GetUuid().c_str());
+    // Use stored credentials if available (for remote camera nodes), otherwise use local device info
+    std::string device_id = device_id_.empty() ? SystemInfo::GetMacAddress() : device_id_;
+    std::string client_id = client_id_.empty() ? Board::GetInstance().GetUuid() : client_id_;
+    http->SetHeader("Device-Id", device_id.c_str());
+    http->SetHeader("Client-Id", client_id.c_str());
     if (!explain_token_.empty()) {
         http->SetHeader("Authorization", "Bearer " + explain_token_);
     }

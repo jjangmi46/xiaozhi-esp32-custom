@@ -221,11 +221,13 @@ void Application::ShowActivationCode(const std::string& code, const std::string&
     // This sentence uses 9KB of SRAM, so we need to wait for it to finish
     Alert(Lang::Strings::ACTIVATION, message.c_str(), "link", Lang::Sounds::OGG_ACTIVATION);
 
-    for (const auto& digit : code) {
-        auto it = std::find_if(digit_sounds.begin(), digit_sounds.end(),
-            [digit](const digit_sound& ds) { return ds.digit == digit; });
-        if (it != digit_sounds.end()) {
-            audio_service_.PlaySound(it->sound);
+    if (audio_initialized_) {
+        for (const auto& digit : code) {
+            auto it = std::find_if(digit_sounds.begin(), digit_sounds.end(),
+                [digit](const digit_sound& ds) { return ds.digit == digit; });
+            if (it != digit_sounds.end()) {
+                audio_service_.PlaySound(it->sound);
+            }
         }
     }
 }
@@ -236,7 +238,7 @@ void Application::Alert(const char* status, const char* message, const char* emo
     display->SetStatus(status);
     display->SetEmotion(emotion);
     display->SetChatMessage("system", message);
-    if (!sound.empty()) {
+    if (!sound.empty() && audio_initialized_) {
         audio_service_.PlaySound(sound);
     }
 }
@@ -255,11 +257,15 @@ void Application::ToggleChatState() {
         SetDeviceState(kDeviceStateIdle);
         return;
     } else if (device_state_ == kDeviceStateWifiConfiguring) {
-        audio_service_.EnableAudioTesting(true);
+        if (audio_initialized_) {
+            audio_service_.EnableAudioTesting(true);
+        }
         SetDeviceState(kDeviceStateAudioTesting);
         return;
     } else if (device_state_ == kDeviceStateAudioTesting) {
-        audio_service_.EnableAudioTesting(false);
+        if (audio_initialized_) {
+            audio_service_.EnableAudioTesting(false);
+        }
         SetDeviceState(kDeviceStateWifiConfiguring);
         return;
     }
@@ -296,7 +302,9 @@ void Application::StartListening() {
         SetDeviceState(kDeviceStateIdle);
         return;
     } else if (device_state_ == kDeviceStateWifiConfiguring) {
-        audio_service_.EnableAudioTesting(true);
+        if (audio_initialized_) {
+            audio_service_.EnableAudioTesting(true);
+        }
         SetDeviceState(kDeviceStateAudioTesting);
         return;
     }
@@ -327,7 +335,9 @@ void Application::StartListening() {
 
 void Application::StopListening() {
     if (device_state_ == kDeviceStateAudioTesting) {
-        audio_service_.EnableAudioTesting(false);
+        if (audio_initialized_) {
+            audio_service_.EnableAudioTesting(false);
+        }
         SetDeviceState(kDeviceStateWifiConfiguring);
         return;
     }
@@ -360,22 +370,27 @@ void Application::Start() {
     // Print board name/version info
     display->SetChatMessage("system", SystemInfo::GetUserAgent().c_str());
 
-    /* Setup the audio service */
+    /* Setup the audio service (skip if no audio codec) */
     auto codec = board.GetAudioCodec();
-    audio_service_.Initialize(codec);
-    audio_service_.Start();
+    if (codec != nullptr) {
+        audio_service_.Initialize(codec);
+        audio_service_.Start();
 
-    AudioServiceCallbacks callbacks;
-    callbacks.on_send_queue_available = [this]() {
-        xEventGroupSetBits(event_group_, MAIN_EVENT_SEND_AUDIO);
-    };
-    callbacks.on_wake_word_detected = [this](const std::string& wake_word) {
-        xEventGroupSetBits(event_group_, MAIN_EVENT_WAKE_WORD_DETECTED);
-    };
-    callbacks.on_vad_change = [this](bool speaking) {
-        xEventGroupSetBits(event_group_, MAIN_EVENT_VAD_CHANGE);
-    };
-    audio_service_.SetCallbacks(callbacks);
+        AudioServiceCallbacks callbacks;
+        callbacks.on_send_queue_available = [this]() {
+            xEventGroupSetBits(event_group_, MAIN_EVENT_SEND_AUDIO);
+        };
+        callbacks.on_wake_word_detected = [this](const std::string& wake_word) {
+            xEventGroupSetBits(event_group_, MAIN_EVENT_WAKE_WORD_DETECTED);
+        };
+        callbacks.on_vad_change = [this](bool speaking) {
+            xEventGroupSetBits(event_group_, MAIN_EVENT_VAD_CHANGE);
+        };
+        audio_service_.SetCallbacks(callbacks);
+        audio_initialized_ = true;
+    } else {
+        ESP_LOGW(TAG, "No audio codec, skipping audio service initialization");
+    }
 
     // Start the main event loop task with priority 3
     xTaskCreate([](void* arg) {
@@ -425,13 +440,13 @@ void Application::Start() {
         xEventGroupSetBits(event_group_, MAIN_EVENT_ERROR);
     });
     protocol_->OnIncomingAudio([this](std::unique_ptr<AudioStreamPacket> packet) {
-        if (device_state_ == kDeviceStateSpeaking) {
+        if (audio_initialized_ && device_state_ == kDeviceStateSpeaking) {
             audio_service_.PushPacketToDecodeQueue(std::move(packet));
         }
     });
     protocol_->OnAudioChannelOpened([this, codec, &board]() {
         board.SetPowerSaveMode(false);
-        if (protocol_->server_sample_rate() != codec->output_sample_rate()) {
+        if (audio_initialized_ && codec && protocol_->server_sample_rate() != codec->output_sample_rate()) {
             ESP_LOGW(TAG, "Server sample rate %d does not match device output sample rate %d, resampling may cause distortion",
                 protocol_->server_sample_rate(), codec->output_sample_rate());
         }
@@ -564,7 +579,9 @@ void Application::Start() {
         display->ShowNotification(message.c_str());
         display->SetChatMessage("system", "");
         // Play the success sound to indicate the device is ready
-        audio_service_.PlaySound(Lang::Sounds::OGG_SUCCESS);
+        if (audio_initialized_) {
+            audio_service_.PlaySound(Lang::Sounds::OGG_SUCCESS);
+        }
     }
 }
 
@@ -595,9 +612,11 @@ void Application::MainEventLoop() {
         }
 
         if (bits & MAIN_EVENT_SEND_AUDIO) {
-            while (auto packet = audio_service_.PopPacketFromSendQueue()) {
-                if (protocol_ && !protocol_->SendAudio(std::move(packet))) {
-                    break;
+            if (audio_initialized_) {
+                while (auto packet = audio_service_.PopPacketFromSendQueue()) {
+                    if (protocol_ && !protocol_->SendAudio(std::move(packet))) {
+                        break;
+                    }
                 }
             }
         }
@@ -638,7 +657,7 @@ void Application::MainEventLoop() {
 }
 
 void Application::OnWakeWordDetected() {
-    if (!protocol_) {
+    if (!protocol_ || !audio_initialized_) {
         return;
     }
 
@@ -710,8 +729,10 @@ void Application::SetDeviceState(DeviceState state) {
         case kDeviceStateIdle:
             display->SetStatus(Lang::Strings::STANDBY);
             display->SetEmotion("neutral");
-            audio_service_.EnableVoiceProcessing(false);
-            audio_service_.EnableWakeWordDetection(true);
+            if (audio_initialized_) {
+                audio_service_.EnableVoiceProcessing(false);
+                audio_service_.EnableWakeWordDetection(true);
+            }
             break;
         case kDeviceStateConnecting:
             display->SetStatus(Lang::Strings::CONNECTING);
@@ -723,7 +744,7 @@ void Application::SetDeviceState(DeviceState state) {
             display->SetEmotion("neutral");
 
             // Make sure the audio processor is running
-            if (!audio_service_.IsAudioProcessorRunning()) {
+            if (audio_initialized_ && !audio_service_.IsAudioProcessorRunning()) {
                 // Send the start listening command
                 protocol_->SendStartListening(listening_mode_);
                 audio_service_.EnableVoiceProcessing(true);
@@ -733,12 +754,14 @@ void Application::SetDeviceState(DeviceState state) {
         case kDeviceStateSpeaking:
             display->SetStatus(Lang::Strings::SPEAKING);
 
-            if (listening_mode_ != kListeningModeRealtime) {
-                audio_service_.EnableVoiceProcessing(false);
-                // Only AFE wake word can be detected in speaking mode
-                audio_service_.EnableWakeWordDetection(audio_service_.IsAfeWakeWord());
+            if (audio_initialized_) {
+                if (listening_mode_ != kListeningModeRealtime) {
+                    audio_service_.EnableVoiceProcessing(false);
+                    // Only AFE wake word can be detected in speaking mode
+                    audio_service_.EnableWakeWordDetection(audio_service_.IsAfeWakeWord());
+                }
+                audio_service_.ResetDecoder();
             }
-            audio_service_.ResetDecoder();
             break;
         default:
             // Do nothing
@@ -753,7 +776,9 @@ void Application::Reboot() {
         protocol_->CloseAudioChannel();
     }
     protocol_.reset();
-    audio_service_.Stop();
+    if (audio_initialized_) {
+        audio_service_.Stop();
+    }
 
     vTaskDelay(pdMS_TO_TICKS(1000));
     esp_restart();
@@ -783,7 +808,9 @@ bool Application::UpgradeFirmware(Ota& ota, const std::string& url) {
     display->SetChatMessage("system", message.c_str());
 
     board.SetPowerSaveMode(false);
-    audio_service_.Stop();
+    if (audio_initialized_) {
+        audio_service_.Stop();
+    }
     vTaskDelay(pdMS_TO_TICKS(1000));
 
     bool upgrade_success = ota.StartUpgradeFromUrl(upgrade_url, [display](int progress, size_t speed) {
@@ -797,7 +824,9 @@ bool Application::UpgradeFirmware(Ota& ota, const std::string& url) {
     if (!upgrade_success) {
         // Upgrade failed, restart audio service and continue running
         ESP_LOGE(TAG, "Firmware upgrade failed, restarting audio service and continuing operation...");
-        audio_service_.Start(); // Restart audio service
+        if (audio_initialized_) {
+            audio_service_.Start(); // Restart audio service
+        }
         board.SetPowerSaveMode(true); // Restore power save mode
         Alert(Lang::Strings::ERROR, Lang::Strings::UPGRADE_FAILED, "circle_xmark", Lang::Sounds::OGG_EXCLAMATION);
         vTaskDelay(pdMS_TO_TICKS(3000));
@@ -813,7 +842,7 @@ bool Application::UpgradeFirmware(Ota& ota, const std::string& url) {
 }
 
 void Application::WakeWordInvoke(const std::string& wake_word) {
-    if (!protocol_) {
+    if (!protocol_ || !audio_initialized_) {
         return;
     }
 
@@ -864,7 +893,7 @@ bool Application::CanEnterSleepMode() {
         return false;
     }
 
-    if (!audio_service_.IsIdle()) {
+    if (audio_initialized_ && !audio_service_.IsIdle()) {
         return false;
     }
 
@@ -892,19 +921,21 @@ void Application::SetAecMode(AecMode mode) {
     Schedule([this]() {
         auto& board = Board::GetInstance();
         auto display = board.GetDisplay();
-        switch (aec_mode_) {
-        case kAecOff:
-            audio_service_.EnableDeviceAec(false);
-            display->ShowNotification(Lang::Strings::RTC_MODE_OFF);
-            break;
-        case kAecOnServerSide:
-            audio_service_.EnableDeviceAec(false);
-            display->ShowNotification(Lang::Strings::RTC_MODE_ON);
-            break;
-        case kAecOnDeviceSide:
-            audio_service_.EnableDeviceAec(true);
-            display->ShowNotification(Lang::Strings::RTC_MODE_ON);
-            break;
+        if (audio_initialized_) {
+            switch (aec_mode_) {
+            case kAecOff:
+                audio_service_.EnableDeviceAec(false);
+                display->ShowNotification(Lang::Strings::RTC_MODE_OFF);
+                break;
+            case kAecOnServerSide:
+                audio_service_.EnableDeviceAec(false);
+                display->ShowNotification(Lang::Strings::RTC_MODE_ON);
+                break;
+            case kAecOnDeviceSide:
+                audio_service_.EnableDeviceAec(true);
+                display->ShowNotification(Lang::Strings::RTC_MODE_ON);
+                break;
+            }
         }
 
         // If the AEC mode is changed, close the audio channel
@@ -915,5 +946,7 @@ void Application::SetAecMode(AecMode mode) {
 }
 
 void Application::PlaySound(const std::string_view& sound) {
-    audio_service_.PlaySound(sound);
+    if (audio_initialized_) {
+        audio_service_.PlaySound(sound);
+    }
 }

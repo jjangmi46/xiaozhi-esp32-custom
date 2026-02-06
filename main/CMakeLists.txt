@@ -74,6 +74,11 @@ elseif(CONFIG_BOARD_TYPE_XIAO_ESP32S3_SENSE)
     set(BUILTIN_TEXT_FONT font_puhui_basic_20_4)
     set(BUILTIN_ICON_FONT font_awesome_20_4)
 
+elseif(CONFIG_BOARD_TYPE_XIAO_ESP32S3_CAMERA_NODE)
+    set(BOARD_TYPE "xiao-esp32s3-camera-node")
+    set(BUILTIN_TEXT_FONT font_puhui_basic_14_1)
+    set(BUILTIN_ICON_FONT font_awesome_14_1)
+
 elseif(CONFIG_BOARD_TYPE_MY_CUSTOM_BOARD2)
     set(BOARD_TYPE "freenove-esp32s3-display-2.8-lcd")  # 与目录名一致
     set(BUILTIN_TEXT_FONT font_puhui_basic_20_4)  # 根据屏幕大小选择合适的字体

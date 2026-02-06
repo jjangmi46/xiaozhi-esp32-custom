@@ -27,6 +27,10 @@
 #include "config.h"
 #include "esp_lcd_ili9341.h"
 
+#if UART_BRIDGE_ENABLED
+#include "uart_bridge_camera.h"
+#endif
+
 // Touch Pins (FT6336G) - from lcdwiki.com specs
 #define TOUCH_RST_PIN       GPIO_NUM_18
 
@@ -50,6 +54,10 @@ class FreenoveESP32S3Display : public WifiBoard {
   esp_timer_handle_t angry_revert_timer_ = nullptr;
   int tap_count_ = 0;
   bool first_multi_tap_ = true;
+
+#if UART_BRIDGE_ENABLED
+  UartBridgeCamera* camera_ = nullptr;
+#endif
 
   void InitializeSpi() {
     spi_bus_config_t buscfg = {};
@@ -271,6 +279,21 @@ class FreenoveESP32S3Display : public WifiBoard {
     });
   }
 
+#if UART_BRIDGE_ENABLED
+  void InitializeCamera() {
+    ESP_LOGI(TAG, "Initializing UART bridge camera...");
+    camera_ = new UartBridgeCamera(UART_BRIDGE_PORT, UART_BRIDGE_TX_PIN,
+                                    UART_BRIDGE_RX_PIN, UART_BRIDGE_BAUD);
+    if (!camera_->Initialize()) {
+      ESP_LOGE(TAG, "Failed to initialize UART bridge camera");
+      delete camera_;
+      camera_ = nullptr;
+    } else {
+      ESP_LOGI(TAG, "UART bridge camera initialized");
+    }
+  }
+#endif
+
  public:
   FreenoveESP32S3Display(): boot_button_(BOOT_BUTTON_GPIO)
   {
@@ -279,7 +302,10 @@ class FreenoveESP32S3Display : public WifiBoard {
     InitializeLcdDisplay();
     InitializeTouch();
     InitializeButtons();
-    InitializeTools(); 
+    InitializeTools();
+#if UART_BRIDGE_ENABLED
+    InitializeCamera();
+#endif
     GetBacklight()->SetBrightness(100);
   }
 
@@ -324,10 +350,16 @@ class FreenoveESP32S3Display : public WifiBoard {
       return display_; 
   }
   
-  virtual Backlight *GetBacklight() override { 
-      static PwmBacklight b(DISPLAY_BACKLIGHT_PIN, DISPLAY_BACKLIGHT_OUTPUT_INVERT); 
-      return &b; 
+  virtual Backlight *GetBacklight() override {
+      static PwmBacklight b(DISPLAY_BACKLIGHT_PIN, DISPLAY_BACKLIGHT_OUTPUT_INVERT);
+      return &b;
   }
+
+#if UART_BRIDGE_ENABLED
+  virtual Camera* GetCamera() override {
+      return camera_;
+  }
+#endif
 };
 
 DECLARE_BOARD(FreenoveESP32S3Display);

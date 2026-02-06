@@ -39,14 +39,21 @@ private:
     std::vector<MmapBuffer> mmap_buffers_;
     std::string explain_url_;
     std::string explain_token_;
+    std::string device_id_;   // Optional: override device ID for remote upload
+    std::string client_id_;   // Optional: override client ID for remote upload
     std::thread encoder_thread_;
 
 public:
     Esp32Camera(const esp_video_init_config_t& config);
     ~Esp32Camera();
 
-    virtual void SetExplainUrl(const std::string& url, const std::string& token);
-    virtual bool Capture();
+    bool IsReady() const { return streaming_on_ && video_fd_ >= 0; }
+    bool IsStreamingOn() const { return streaming_on_; }
+    int GetVideoFd() const { return video_fd_; }
+
+    virtual void SetExplainUrl(const std::string& url, const std::string& token) override;
+    void SetCredentials(const std::string& device_id, const std::string& client_id);
+    virtual bool Capture() override;
     // 翻转控制函数
     virtual bool SetHMirror(bool enabled) override;
     virtual bool SetVFlip(bool enabled) override;

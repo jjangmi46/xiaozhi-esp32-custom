@@ -45,7 +45,7 @@ public:
     void Start();
     void MainEventLoop();
     DeviceState GetDeviceState() const { return device_state_; }
-    bool IsVoiceDetected() const { return audio_service_.IsVoiceDetected(); }
+    bool IsVoiceDetected() const { return audio_initialized_ && audio_service_.IsVoiceDetected(); }
     void Schedule(std::function<void()> callback);
     void SetDeviceState(DeviceState state);
     void Alert(const char* status, const char* message, const char* emotion = "", const std::string_view& sound = "");
@@ -81,6 +81,7 @@ private:
 
     bool has_server_time_ = false;
     bool aborted_ = false;
+    bool audio_initialized_ = false;
     int clock_ticks_ = 0;
     TaskHandle_t check_new_version_task_handle_ = nullptr;
     TaskHandle_t main_event_loop_task_handle_ = nullptr;
