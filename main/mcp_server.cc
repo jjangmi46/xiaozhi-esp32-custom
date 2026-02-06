@@ -103,6 +103,7 @@ void McpServer::AddCommonTools() {
             "Take a photo and explain it. Use this tool after the user asks you to see something.\n"
             "Args:\n"
             "  `question`: The question that you want to ask about the photo.\n"
+            "IMPORTANT: Do not use previous descriptions as the question. If the user just says 'take a photo', use 'Describe this image' as the default question.\n"
             "Return:\n"
             "  A JSON object that provides the photo information.",
             PropertyList({

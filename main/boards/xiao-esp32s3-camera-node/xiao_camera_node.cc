@@ -229,9 +229,20 @@ private:
     }
 
     void HandleSnapCommand(const std::string& question) {
+        ESP_LOGI(TAG, "========== SNAP COMMAND START ==========");
         ESP_LOGI(TAG, "Processing SNAP: %s", question.c_str());
 
+        // Use a default question if the provided one is empty or suspiciously long
+        // (long questions might be previous responses incorrectly passed as questions)
+        std::string actual_question = question;
+        if (question.empty() || question.length() > 100) {
+            actual_question = "Please describe what you see";  // "Please describe what you see"
+            ESP_LOGW(TAG, "Using default question (original was empty or too long: %d chars)",
+                     (int)question.length());
+        }
+
         if (!camera_) {
+            ESP_LOGE(TAG, "Camera pointer is null!");
             SendResponse("ERR:Camera not initialized");
             return;
         }
@@ -249,18 +260,22 @@ private:
 
         // Check if WiFi is connected (needed for cloud upload)
         if (!WifiStation::GetInstance().IsConnected()) {
+            ESP_LOGE(TAG, "WiFi not connected!");
             SendResponse("ERR:WiFi not connected");
             return;
         }
 
         // Capture image
+        ESP_LOGI(TAG, "Calling camera_->Capture()...");
         if (!camera_->Capture()) {
             ESP_LOGE(TAG, "Camera capture failed");
             SendResponse("ERR:Capture failed");
             return;
         }
+        ESP_LOGI(TAG, "Camera capture succeeded");
 
         // Upload to cloud and get explanation
+        ESP_LOGI(TAG, "Calling camera_->Explain()...");
         try {
             std::string result = camera_->Explain(question);
             ESP_LOGI(TAG, "Explain result: %s", result.c_str());
@@ -269,6 +284,7 @@ private:
             ESP_LOGE(TAG, "Explain failed: %s", e.what());
             SendResponse("ERR:" + std::string(e.what()));
         }
+        ESP_LOGI(TAG, "========== SNAP COMMAND END ==========");
     }
 
     void SendResponse(const std::string& response) {

@@ -2,6 +2,7 @@
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/param.h>
+#include <sys/select.h>
 #include <unistd.h>
 #include <errno.h>
 #include <esp_heap_caps.h>
@@ -389,22 +390,45 @@ void Esp32Camera::SetCredentials(const std::string& device_id, const std::string
 }
 
 bool Esp32Camera::Capture() {
+    ESP_LOGI(TAG, "Capture() started");
+
     if (encoder_thread_.joinable()) {
+        ESP_LOGI(TAG, "Waiting for previous encoder thread to finish...");
         encoder_thread_.join();
+        ESP_LOGI(TAG, "Previous encoder thread finished");
     }
 
     if (!streaming_on_ || video_fd_ < 0) {
+        ESP_LOGE(TAG, "Camera not ready: streaming_on=%d, video_fd=%d", streaming_on_, video_fd_);
         return false;
     }
 
     for (int i = 0; i < 3; i++) {
+        ESP_LOGI(TAG, "Capture loop iteration %d: waiting for frame (select)...", i);
+
+        // Use select() with timeout to prevent indefinite blocking
+        fd_set fds;
+        FD_ZERO(&fds);
+        FD_SET(video_fd_, &fds);
+        struct timeval tv = { .tv_sec = 20, .tv_usec = 0 };  // 20 second timeout
+        int sel_ret = select(video_fd_ + 1, &fds, NULL, NULL, &tv);
+        if (sel_ret == 0) {
+            ESP_LOGE(TAG, "Capture timeout: no frame available after 20 seconds (iteration %d)", i);
+            return false;
+        } else if (sel_ret < 0) {
+            ESP_LOGE(TAG, "select() failed: errno=%d (%s)", errno, strerror(errno));
+            return false;
+        }
+        ESP_LOGI(TAG, "select() returned, calling VIDIOC_DQBUF...");
+
         struct v4l2_buffer buf = {};
         buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
         buf.memory = V4L2_MEMORY_MMAP;
         if (ioctl(video_fd_, VIDIOC_DQBUF, &buf) != 0) {
-            ESP_LOGE(TAG, "VIDIOC_DQBUF failed");
+            ESP_LOGE(TAG, "VIDIOC_DQBUF failed: errno=%d (%s)", errno, strerror(errno));
             return false;
         }
+        ESP_LOGI(TAG, "VIDIOC_DQBUF succeeded, buf.index=%d, bytesused=%lu", buf.index, buf.bytesused);
         if (i == 2) {
             // 保存帧副本到PSRAM
             if (frame_.data) {
@@ -840,6 +864,7 @@ bool Esp32Camera::Capture() {
         auto image = std::make_unique<LvglAllocatedImage>(data, lvgl_image_size, w, h, stride, color_format);
         display->SetPreviewImage(std::move(image));
     }
+    ESP_LOGI(TAG, "Capture() completed successfully");
     return true;
 }
 
@@ -901,6 +926,8 @@ bool Esp32Camera::SetVFlip(bool enabled) {
  * @warning 如果摄像头缓冲区为空或网络连接失败，将返回错误信息
  */
 std::string Esp32Camera::Explain(const std::string& question) {
+    ESP_LOGI(TAG, "Explain() started with question: %s", question.c_str());
+
     if (explain_url_.empty()) {
         throw std::runtime_error("Image explain URL or token is not set");
     }
@@ -912,8 +939,10 @@ std::string Esp32Camera::Explain(const std::string& question) {
         throw std::runtime_error("Failed to create JPEG queue");
     }
 
+    ESP_LOGI(TAG, "Starting encoder thread...");
     // We spawn a thread to encode the image to JPEG using optimized encoder (cost about 500ms and 8KB SRAM)
     encoder_thread_ = std::thread([this, jpeg_queue]() {
+        ESP_LOGI(TAG, "Encoder thread started");
         uint16_t w = frame_.width ? frame_.width : 320;
         uint16_t h = frame_.height ? frame_.height : 240;
         v4l2_pix_fmt_t enc_fmt = frame_.format;
@@ -939,9 +968,11 @@ std::string Esp32Camera::Explain(const std::string& question) {
             jpeg_queue);
 
         if (!ok) {
+            ESP_LOGE(TAG, "Encoder thread: image_to_jpeg_cb failed");
             JpegChunk chunk = {.data = nullptr, .len = 0};
             xQueueSend(jpeg_queue, &chunk, portMAX_DELAY);
         }
+        ESP_LOGI(TAG, "Encoder thread finished");
     });
 
     auto network = Board::GetInstance().GetNetwork();
@@ -1013,7 +1044,9 @@ std::string Esp32Camera::Explain(const std::string& question) {
         heap_caps_free(chunk.data);
     }
     // Wait for the encoder thread to finish
+    ESP_LOGI(TAG, "Waiting for encoder thread to join...");
     encoder_thread_.join();
+    ESP_LOGI(TAG, "Encoder thread joined successfully");
     // 清理队列
     vQueueDelete(jpeg_queue);
 
@@ -1041,7 +1074,7 @@ std::string Esp32Camera::Explain(const std::string& question) {
 
     // Get remain task stack size
     size_t remain_stack_size = uxTaskGetStackHighWaterMark(nullptr);
-    ESP_LOGI(TAG, "Explain image size=%d bytes, compressed size=%d, remain stack size=%d, question=%s\n%s",
+    ESP_LOGI(TAG, "Explain() completed: image size=%d bytes, compressed size=%d, remain stack size=%d, question=%s\n%s",
              (int)frame_.len, (int)total_sent, (int)remain_stack_size, question.c_str(), result.c_str());
     return result;
 }
