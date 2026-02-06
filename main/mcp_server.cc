@@ -100,12 +100,18 @@ void McpServer::AddCommonTools() {
     auto camera = board.GetCamera();
     if (camera) {
         AddTool("self.camera.take_photo",
-            "Take a photo and explain it. Use this tool after the user asks you to see something.\n"
+            "Take a photo with the device's camera and analyze what is visible.\n"
+            "IMPORTANT: You MUST use this tool whenever the user:\n"
+            "  - Asks you to look at, see, or view something\n"
+            "  - Asks what is in front of you or around you\n"
+            "  - Asks you to take a photo or picture\n"
+            "  - Asks you to describe what you see\n"
+            "  - Asks about any visual information\n"
+            "DO NOT roleplay seeing things or make up descriptions - you cannot see without calling this tool!\n"
             "Args:\n"
-            "  `question`: The question that you want to ask about the photo.\n"
-            "IMPORTANT: Do not use previous descriptions as the question. If the user just says 'take a photo', use 'Describe this image' as the default question.\n"
+            "  `question`: A short question about what to look for (e.g., 'What do you see?', 'Describe this')\n"
             "Return:\n"
-            "  A JSON object that provides the photo information.",
+            "  A description of what the camera captured.",
             PropertyList({
                 Property("question", kPropertyTypeString)
             }),

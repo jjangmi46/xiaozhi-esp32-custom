@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <esp_heap_caps.h>
+#include <esp_timer.h>
 #include <cstdio>
 #include <cstring>
 
@@ -327,38 +328,41 @@ Esp32Camera::Esp32Camera(const esp_video_init_config_t& config) {
         return;
     }
 
-#ifdef CONFIG_ESP_VIDEO_ENABLE_ISP_VIDEO_DEVICE
-    // 当启用 ISP 时，ISP 需要一些照片来初始化参数，因此开启后后台拍摄5s照片并丢弃
+    // Camera warm-up task - capture and discard frames to let sensor stabilize
+    // This is required for ISP cameras and helps DVP cameras like OV3660 auto-expose
     xTaskCreate(
         [](void* arg) {
             Esp32Camera* self = static_cast<Esp32Camera*>(arg);
             uint16_t capture_count = 0;
             TickType_t start = xTaskGetTickCount();
-            TickType_t duration = 5000 / portTICK_PERIOD_MS;  // 5s
+#ifdef CONFIG_ESP_VIDEO_ENABLE_ISP_VIDEO_DEVICE
+            TickType_t duration = 5000 / portTICK_PERIOD_MS;  // 5s for ISP
+#else
+            TickType_t duration = 2000 / portTICK_PERIOD_MS;  // 2s for DVP (sensor warm-up)
+#endif
+            ESP_LOGI(TAG, "Camera warm-up starting...");
             while ((xTaskGetTickCount() - start) < duration) {
                 struct v4l2_buffer buf = {};
                 buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
                 buf.memory = V4L2_MEMORY_MMAP;
                 if (ioctl(self->video_fd_, VIDIOC_DQBUF, &buf) != 0) {
-                    ESP_LOGE(TAG, "VIDIOC_DQBUF failed during init");
-                    vTaskDelay(10 / portTICK_PERIOD_MS);
+                    ESP_LOGD(TAG, "VIDIOC_DQBUF failed during warm-up, retrying...");
+                    vTaskDelay(100 / portTICK_PERIOD_MS);
                     continue;
                 }
                 if (ioctl(self->video_fd_, VIDIOC_QBUF, &buf) != 0) {
-                    ESP_LOGE(TAG, "VIDIOC_QBUF failed during init");
+                    ESP_LOGE(TAG, "VIDIOC_QBUF failed during warm-up");
                 }
                 capture_count++;
             }
-            ESP_LOGI(TAG, "Camera init success, captured %d frames in %dms", capture_count,
-                     (xTaskGetTickCount() - start) * portTICK_PERIOD_MS);
+            uint32_t elapsed_ms = (xTaskGetTickCount() - start) * portTICK_PERIOD_MS;
+            ESP_LOGI(TAG, "Camera warm-up complete: captured %d frames in %lu ms (%.1f fps)",
+                     capture_count, elapsed_ms,
+                     elapsed_ms > 0 ? (capture_count * 1000.0f / elapsed_ms) : 0);
             self->streaming_on_ = true;
             vTaskDelete(NULL);
         },
         "CameraInitTask", 4096, this, 5, nullptr);
-#else
-    ESP_LOGI(TAG, "Camera init success");
-    streaming_on_ = true;
-#endif  // CONFIG_ESP_VIDEO_ENABLE_ISP_VIDEO_DEVICE
 }
 
 Esp32Camera::~Esp32Camera() {
@@ -404,22 +408,25 @@ bool Esp32Camera::Capture() {
     }
 
     for (int i = 0; i < 3; i++) {
-        ESP_LOGI(TAG, "Capture loop iteration %d: waiting for frame (select)...", i);
+        ESP_LOGI(TAG, "Capture loop iteration %d: waiting for frame (select)... mmap_buffers=%d",
+                 i, (int)mmap_buffers_.size());
 
         // Use select() with timeout to prevent indefinite blocking
         fd_set fds;
         FD_ZERO(&fds);
         FD_SET(video_fd_, &fds);
-        struct timeval tv = { .tv_sec = 20, .tv_usec = 0 };  // 20 second timeout
+        struct timeval tv = { .tv_sec = 2, .tv_usec = 0 };  // 2 second timeout per frame
+        int64_t start_time = esp_timer_get_time();
         int sel_ret = select(video_fd_ + 1, &fds, NULL, NULL, &tv);
+        int64_t elapsed_ms = (esp_timer_get_time() - start_time) / 1000;
         if (sel_ret == 0) {
-            ESP_LOGE(TAG, "Capture timeout: no frame available after 20 seconds (iteration %d)", i);
+            ESP_LOGE(TAG, "Capture timeout: no frame available after 2 seconds (iteration %d)", i);
             return false;
         } else if (sel_ret < 0) {
             ESP_LOGE(TAG, "select() failed: errno=%d (%s)", errno, strerror(errno));
             return false;
         }
-        ESP_LOGI(TAG, "select() returned, calling VIDIOC_DQBUF...");
+        ESP_LOGI(TAG, "select() returned after %lld ms, calling VIDIOC_DQBUF...", elapsed_ms);
 
         struct v4l2_buffer buf = {};
         buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;

@@ -81,10 +81,12 @@ private:
 
         camera_ = new Esp32Camera(video_config);
 
-        if (camera_->IsReady()) {
-            ESP_LOGI(TAG, "Camera initialized successfully");
+        // Note: Camera warm-up runs in background task, so IsReady() may be false initially
+        // The camera will be ready by the time WiFi connects and first SNAP command arrives
+        if (camera_->GetVideoFd() >= 0) {
+            ESP_LOGI(TAG, "Camera created (video_fd=%d), warm-up in progress...", camera_->GetVideoFd());
         } else {
-            ESP_LOGE(TAG, "Camera initialization failed - camera not ready");
+            ESP_LOGE(TAG, "Camera initialization failed - video device not opened");
         }
     }
 
@@ -275,9 +277,9 @@ private:
         ESP_LOGI(TAG, "Camera capture succeeded");
 
         // Upload to cloud and get explanation
-        ESP_LOGI(TAG, "Calling camera_->Explain()...");
+        ESP_LOGI(TAG, "Calling camera_->Explain() with question: %s", actual_question.c_str());
         try {
-            std::string result = camera_->Explain(question);
+            std::string result = camera_->Explain(actual_question);
             ESP_LOGI(TAG, "Explain result: %s", result.c_str());
             SendResponse("OK:" + result);
         } catch (const std::exception& e) {
