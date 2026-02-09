@@ -45,7 +45,7 @@ void LcdDisplay::InitializeLcdThemes() {
     auto dark_theme = new LvglTheme("dark");
     dark_theme->set_background_color(lv_color_hex(0x000000));
     dark_theme->set_text_color(lv_color_hex(0xFFFFFF));
-    dark_theme->set_chat_background_color(lv_color_hex(0xE0E0E0));  // Light gray chat area in dark mode
+    dark_theme->set_chat_background_color(lv_color_hex(0x000000));  // Light gray chat area in dark mode
     dark_theme->set_user_bubble_color(lv_color_hex(0x00FF00));
     dark_theme->set_assistant_bubble_color(lv_color_hex(0x222222));
     dark_theme->set_system_bubble_color(lv_color_hex(0x000000));
