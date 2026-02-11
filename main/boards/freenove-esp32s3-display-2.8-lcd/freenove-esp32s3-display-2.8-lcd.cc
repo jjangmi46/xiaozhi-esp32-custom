@@ -37,6 +37,11 @@
 // Multi-tap detection timing (microseconds)
 #define MULTI_TAP_WINDOW_US      400000   // 400ms window to detect multi-tap sequence
 
+// Idle animation timing (microseconds)
+#define IDLE_CHECK_INTERVAL_US   20000000  // Check every 20 seconds
+#define IDLE_ANIM_CHANCE         30       // 30% chance to trigger animation per check
+#define NUM_IDLE_ANIMATIONS      3        // Number of idle animations on ESP32-C3 (idle1, idle2, ...)
+
 #define TAG "FreenoveBoard"
 
 LV_FONT_DECLARE(font_puhui_16_4);
@@ -54,6 +59,9 @@ class FreenoveESP32S3Display : public WifiBoard {
   esp_timer_handle_t angry_revert_timer_ = nullptr;
   int tap_count_ = 0;
   bool first_multi_tap_ = true;
+
+  // Idle animation
+  esp_timer_handle_t idle_anim_timer_ = nullptr;
 
 #if UART_BRIDGE_ENABLED
   UartBridgeCamera* camera_ = nullptr;
@@ -184,6 +192,74 @@ class FreenoveESP32S3Display : public WifiBoard {
       ESP_LOGI(TAG, "Reverted from angry to neutral");
   }
 
+  // Timer callback — periodically triggers idle animations when device is idle
+  static void OnIdleAnimationCheck(void* arg) {
+      auto& app = Application::GetInstance();
+      DeviceState state = app.GetDeviceState();
+
+      // Log state on every check (can remove after debugging)
+      static int check_count = 0;
+      check_count++;
+      if (check_count % 5 == 0) {  // Log every 5th check (~40 seconds)
+          ESP_LOGI(TAG, "Idle check #%d: state=%d (need %d for idle)", check_count, state, kDeviceStateIdle);
+      }
+
+      // Only trigger animations when device is truly idle
+      if (state != kDeviceStateIdle) {
+          return;
+      }
+
+      auto* board = static_cast<FreenoveESP32S3Display*>(arg);
+
+      // Random chance to trigger servo animation (30%)
+      if ((esp_random() % 100) < IDLE_ANIM_CHANCE) {
+          // Pick a random idle animation (idle1, idle2, ..., idleN)
+          int anim_num = (esp_random() % NUM_IDLE_ANIMATIONS) + 1;
+          char uart_msg[16];
+          snprintf(uart_msg, sizeof(uart_msg), "E:idle%d\n", anim_num);
+
+          int len = strlen(uart_msg);
+          int written = uart_write_bytes(UART_NUM_1, uart_msg, len);
+          ESP_LOGI(TAG, "Idle animation: sent '%s' (%d/%d bytes)", uart_msg, written, len);
+
+          // idle1 = sleepy animation, show sleepy emoji on display
+          if (anim_num == 1) {
+              auto display = Board::GetInstance().GetDisplay();
+              display->SetEmotion("sleepy");
+              ESP_LOGI(TAG, "Display: sleepy (reverts in 3s)");
+              esp_timer_stop(board->angry_revert_timer_);
+              esp_timer_start_once(board->angry_revert_timer_, 4000000);
+          }
+      }
+      // Separate chance to show sleepy emoji without servo animation (15%)
+      else if ((esp_random() % 100) < 15) {
+          auto display = Board::GetInstance().GetDisplay();
+          display->SetEmotion("sleepy");
+          ESP_LOGI(TAG, "Display: sleepy (no servo, reverts in 3s)");
+          esp_timer_stop(board->angry_revert_timer_);
+          esp_timer_start_once(board->angry_revert_timer_, 4000000);
+      }
+  }
+
+  void InitializeIdleAnimations() {
+      // UART1 is already initialized elsewhere for E: emotion commands
+      // We just reuse it for I: idle animation commands
+
+      // Create idle animation timer
+      esp_timer_create_args_t timer_args = {};
+      timer_args.callback = OnIdleAnimationCheck;
+      timer_args.arg = this;
+      timer_args.dispatch_method = ESP_TIMER_TASK;
+      timer_args.name = "idle_anim";
+      ESP_ERROR_CHECK(esp_timer_create(&timer_args, &idle_anim_timer_));
+
+      // Start periodic idle animation checks
+      ESP_ERROR_CHECK(esp_timer_start_periodic(idle_anim_timer_, IDLE_CHECK_INTERVAL_US));
+
+      ESP_LOGI(TAG, "Idle animations initialized (check every %d ms, %d%% chance)",
+               IDLE_CHECK_INTERVAL_US / 1000, IDLE_ANIM_CHANCE);
+  }
+
   void InitializeTouch() {
     ESP_LOGI(TAG, "Initializing FT6336 Touch...");
 
@@ -303,6 +379,7 @@ class FreenoveESP32S3Display : public WifiBoard {
     InitializeTouch();
     InitializeButtons();
     InitializeTools();
+    InitializeIdleAnimations();
 #if UART_BRIDGE_ENABLED
     InitializeCamera();
 #endif

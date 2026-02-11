@@ -69,12 +69,17 @@ This project involves THREE ESP32 boards working together as a robot system:
 ### 3. ESP32-C3 (Servo Controller)
 - **Role**: Motor control
 - **Features**:
-  - Controls 3 servo motors
+  - Controls 3 servo motors (head pan/tilt, ears, etc.)
   - PWM output for servo positions
+  - Receives commands from Freenove via UART
+  - Pre-defined animation sequences (idle1, idle2, idle3, etc.)
 - **NO WiFi** - purely motor control
+- **UART**: RX connected to Freenove TX (GPIO17)
 - **Power**: Shares 5V rail with other boards
 
-## UART Protocol (Freenove ↔ XIAO)
+## UART Protocol (Freenove ↔ XIAO Camera)
+
+**UART2**: TX=GPIO2, RX=GPIO21 at 115200 baud
 
 Commands sent from Freenove to XIAO:
 
@@ -88,6 +93,56 @@ SNAP:<question>
   - <question> is the prompt for vision AI (e.g., "What do you see?")
   - Response: "OK:<vision_result>" or "ERR:<message>"
 ```
+
+## UART Protocol (Freenove ↔ ESP32-C3 Servo Controller)
+
+**UART1**: TX=GPIO17, RX=GPIO18 at 115200 baud (adjustable in code)
+
+Commands sent from Freenove to ESP32-C3:
+
+```
+E:<emotion>
+  - Triggers emotion-based animation
+  - Examples: "E:funny\n", "E:angry\n", "E:neutral\n"
+  - Used when user taps screen multiple times
+
+I:<animation_name>
+  - Triggers idle animation sequence
+  - Examples: "I:idle1\n", "I:idle2\n", "I:idle3\n"
+  - Sent automatically when device is in kDeviceStateIdle
+  - 30% chance to trigger every 8 seconds
+  - Immediately stops if device state changes (user speaks, etc.)
+```
+
+### Idle Animation System
+
+The Freenove board monitors device state and randomly triggers idle animations:
+
+```
+Device State: kDeviceStateIdle
+       │
+       ▼
+   [Timer fires every 8 seconds]
+       │
+       ▼
+   [30% random chance]
+       │
+       ▼
+   [Pick random: idle1, idle2, or idle3]
+       │
+       ▼
+   [Send "I:idleN\n" via UART1]
+       │
+       ▼
+   [ESP32-C3 plays pre-defined servo sequence]
+```
+
+**ESP32-C3 Implementation Notes**:
+- Define animation sequences like `idle1`, `idle2`, `idle3` in ESP32-C3 firmware
+- Each animation should be subtle (small head movements, ear twitch, etc.)
+- Keep animations short (1-2 seconds) so they don't block user interaction
+- Return to neutral position after each animation
+- Consider adding a "busy" flag to prevent overlapping animations
 
 ## Known WiFi Issues & Solutions
 
