@@ -316,6 +316,11 @@ public:
     }
 
     virtual void StartNetwork() override {
+        // Delay WiFi start to avoid contention with Freenove board
+        // Both boards connecting simultaneously to phone hotspot causes failures
+        ESP_LOGI(TAG, "Waiting 5 seconds before WiFi to let Freenove connect first...");
+        vTaskDelay(pdMS_TO_TICKS(5000));
+
         // First start WiFi (required for cloud upload)
         WifiBoard::StartNetwork();
 
