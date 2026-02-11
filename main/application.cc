@@ -292,6 +292,7 @@ void Application::ToggleChatState() {
         });
     } else if (device_state_ == kDeviceStateListening) {
         Schedule([this]() {
+            protocol_->SendAbortSpeaking(kAbortReasonNone);  // Tell server to discard
             protocol_->CloseAudioChannel();
         });
     }
