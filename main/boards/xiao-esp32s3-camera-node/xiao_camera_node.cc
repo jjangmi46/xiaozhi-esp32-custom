@@ -238,7 +238,7 @@ private:
         // (long questions might be previous responses incorrectly passed as questions)
         std::string actual_question = question;
         if (question.empty() || question.length() > 100) {
-            actual_question = "Please describe what you see";  // "Please describe what you see"
+            actual_question = "Please describe what you see";
             ESP_LOGW(TAG, "Using default question (original was empty or too long: %d chars)",
                      (int)question.length());
         }
@@ -249,6 +249,13 @@ private:
             return;
         }
 
+        // Check if vision URL is configured (VISION command must be received first)
+        if (!camera_->HasExplainUrl()) {
+            ESP_LOGE(TAG, "Vision URL not configured - need VISION command first");
+            SendResponse("ERR:Vision URL not configured - resend VISION command");
+            return;
+        }
+
         // Check if camera is ready with detailed logging
         ESP_LOGI(TAG, "Camera state: streaming_on=%d, video_fd=%d, ptr=%p",
                  camera_->IsStreamingOn(), camera_->GetVideoFd(), (void*)camera_);
@@ -256,7 +263,7 @@ private:
         if (!camera_->IsReady()) {
             ESP_LOGE(TAG, "Camera not ready! streaming_on=%d, video_fd=%d",
                      camera_->IsStreamingOn(), camera_->GetVideoFd());
-            SendResponse("ERR:Camera not ready");
+            SendResponse("ERR:Camera not ready (warming up)");
             return;
         }
 
@@ -312,7 +319,11 @@ public:
         InitializeButtons();
         InitializeCamera();
 
-        ESP_LOGI(TAG, "Camera node initialized (UART will start after WiFi)");
+        // Start UART early so we can receive VISION commands from Freenove
+        // even before WiFi is connected. Commands will be queued/stored.
+        InitializeUart();
+
+        ESP_LOGI(TAG, "Camera node initialized, UART ready");
     }
 
     virtual void StartNetwork() override {
@@ -321,11 +332,8 @@ public:
         ESP_LOGI(TAG, "Waiting 5 seconds before WiFi to let Freenove connect first...");
         vTaskDelay(pdMS_TO_TICKS(5000));
 
-        // First start WiFi (required for cloud upload)
+        // Start WiFi (required for cloud upload)
         WifiBoard::StartNetwork();
-
-        // Now initialize UART communication
-        InitializeUart();
 
         ESP_LOGI(TAG, "Camera node ready, waiting for commands");
     }
