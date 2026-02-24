@@ -39,6 +39,11 @@ private:
     void InitializeCamera() {
         ESP_LOGI(TAG, "Initializing camera...");
 
+        // Add delay for camera sensor to stabilize after power-on
+        // OV3660 needs time to initialize after power is applied
+        ESP_LOGI(TAG, "Waiting for camera sensor to stabilize...");
+        vTaskDelay(pdMS_TO_TICKS(500));
+
         static esp_cam_ctlr_dvp_pin_config_t dvp_pin_config = {
             .data_width = CAM_CTLR_DATA_WIDTH_8,
             .data_io = {
@@ -79,15 +84,26 @@ private:
             .dvp = &dvp_config,
         };
 
-        camera_ = new Esp32Camera(video_config);
+        // Try to initialize camera with retries
+        for (int retry = 0; retry < 3; retry++) {
+            if (retry > 0) {
+                ESP_LOGW(TAG, "Retrying camera initialization (attempt %d/3)...", retry + 1);
+                vTaskDelay(pdMS_TO_TICKS(1000));  // Wait 1 second before retry
+            }
 
-        // Note: Camera warm-up runs in background task, so IsReady() may be false initially
-        // The camera will be ready by the time WiFi connects and first SNAP command arrives
-        if (camera_->GetVideoFd() >= 0) {
-            ESP_LOGI(TAG, "Camera created (video_fd=%d), warm-up in progress...", camera_->GetVideoFd());
-        } else {
+            camera_ = new Esp32Camera(video_config);
+
+            if (camera_->GetVideoFd() >= 0) {
+                ESP_LOGI(TAG, "Camera created (video_fd=%d), warm-up in progress...", camera_->GetVideoFd());
+                return;  // Success!
+            }
+
             ESP_LOGE(TAG, "Camera initialization failed - video device not opened");
+            delete camera_;
+            camera_ = nullptr;
         }
+
+        ESP_LOGE(TAG, "Camera initialization failed after 3 attempts!");
     }
 
     void InitializeUart() {
