@@ -15,7 +15,7 @@
 // The XIAO node captures images and uploads them directly to the cloud
 
 #define UART_BRIDGE_BUF_SIZE    1024
-#define UART_BRIDGE_TIMEOUT_MS  30000  // 30 seconds for image upload
+#define UART_BRIDGE_TIMEOUT_MS  90000  // 90 seconds for image upload
 
 class UartBridgeCamera : public Camera {
 private:
