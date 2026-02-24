@@ -214,7 +214,40 @@ std::string UartBridgeCamera::Explain(const std::string& question) {
         // Return the JSON result after "OK:"
         return response.substr(3);
     } else if (response.substr(0, 4) == "ERR:") {
-        throw std::runtime_error(response.substr(4));
+        std::string error_msg = response.substr(4);
+
+        // If XIAO says it needs VISION command, resend it and retry once
+        if (error_msg.find("Vision URL not configured") != std::string::npos ||
+            error_msg.find("resend VISION") != std::string::npos) {
+            ESP_LOGW(TAG, "XIAO needs VISION config, resending...");
+
+            // Resend VISION command
+            std::string device_id = SystemInfo::GetMacAddress();
+            std::string client_id = Board::GetInstance().GetUuid();
+            std::string vision_cmd = "VISION:" + explain_url_ + "|" + explain_token_ +
+                                     "|" + device_id + "|" + client_id;
+            SendCommand(vision_cmd);
+
+            // Wait briefly for VISION to be processed
+            vTaskDelay(pdMS_TO_TICKS(100));
+
+            // Retry SNAP
+            if (!SendCommand(cmd)) {
+                throw std::runtime_error("Failed to send capture command (retry)");
+            }
+
+            if (!WaitForResponse(response, UART_BRIDGE_TIMEOUT_MS)) {
+                throw std::runtime_error("Timeout waiting for camera response (retry)");
+            }
+
+            if (response.substr(0, 3) == "OK:") {
+                return response.substr(3);
+            } else if (response.substr(0, 4) == "ERR:") {
+                throw std::runtime_error(response.substr(4));
+            }
+        }
+
+        throw std::runtime_error(error_msg);
     } else {
         throw std::runtime_error("Invalid response from camera node");
     }

@@ -50,6 +50,7 @@ public:
     bool IsReady() const { return streaming_on_ && video_fd_ >= 0; }
     bool IsStreamingOn() const { return streaming_on_; }
     int GetVideoFd() const { return video_fd_; }
+    bool HasExplainUrl() const { return !explain_url_.empty(); }
 
     virtual void SetExplainUrl(const std::string& url, const std::string& token) override;
     void SetCredentials(const std::string& device_id, const std::string& client_id);
