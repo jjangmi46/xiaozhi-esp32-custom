@@ -357,6 +357,11 @@ public:
     virtual Camera* GetCamera() override {
         return camera_;
     }
+
+    // Camera node doesn't need activation - it's just a peripheral
+    virtual bool SkipsActivation() override {
+        return true;
+    }
 };
 
 DECLARE_BOARD(XiaoCameraNode);

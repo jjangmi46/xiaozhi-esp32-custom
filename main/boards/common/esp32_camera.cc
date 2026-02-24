@@ -340,8 +340,25 @@ Esp32Camera::Esp32Camera(const esp_video_init_config_t& config) {
 #else
             TickType_t duration = 2000 / portTICK_PERIOD_MS;  // 2s for DVP (sensor warm-up)
 #endif
-            ESP_LOGI(TAG, "Camera warm-up starting...");
+            ESP_LOGI(TAG, "Camera warm-up starting (video_fd=%d, duration=%lu ticks)...",
+                     self->video_fd_, (unsigned long)duration);
+            int timeout_count = 0;
             while ((xTaskGetTickCount() - start) < duration) {
+                // Use select() with short timeout to avoid blocking indefinitely
+                fd_set fds;
+                FD_ZERO(&fds);
+                FD_SET(self->video_fd_, &fds);
+                struct timeval tv = { .tv_sec = 0, .tv_usec = 500000 };  // 500ms timeout
+                int sel_ret = select(self->video_fd_ + 1, &fds, NULL, NULL, &tv);
+                if (sel_ret <= 0) {
+                    // Timeout or error - continue loop to check duration
+                    timeout_count++;
+                    if (timeout_count % 4 == 0) {  // Log every 2 seconds
+                        ESP_LOGW(TAG, "Camera warm-up: no frames yet after %d timeouts", timeout_count);
+                    }
+                    continue;
+                }
+
                 struct v4l2_buffer buf = {};
                 buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
                 buf.memory = V4L2_MEMORY_MMAP;
