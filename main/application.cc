@@ -169,6 +169,14 @@ void Application::CheckNewVersion(Ota& ota) {
 
         // No new version, mark the current version as valid
         ota.MarkCurrentVersionValid();
+
+        // Check if this board skips activation (e.g., camera nodes)
+        if (Board::GetInstance().SkipsActivation()) {
+            ESP_LOGI(TAG, "Board skips activation, continuing...");
+            xEventGroupSetBits(event_group_, MAIN_EVENT_CHECK_NEW_VERSION_DONE);
+            break;
+        }
+
         if (!ota.HasActivationCode() && !ota.HasActivationChallenge()) {
             xEventGroupSetBits(event_group_, MAIN_EVENT_CHECK_NEW_VERSION_DONE);
             // Exit the loop if done checking new version

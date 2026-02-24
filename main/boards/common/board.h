@@ -53,6 +53,10 @@ public:
     virtual std::string GetBoardJson() = 0;
     virtual std::string GetDeviceStatusJson() = 0;
 
+    // Returns true if this board should skip the activation flow
+    // Override to true for peripheral boards like camera nodes
+    virtual bool SkipsActivation() { return false; }
+
 };
 
 #define DECLARE_BOARD(BOARD_CLASS_NAME) \
