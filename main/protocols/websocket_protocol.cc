@@ -3,6 +3,7 @@
 #include "system_info.h"
 #include "application.h"
 #include "settings.h"
+#include "mcp_server.h"
 
 #include <cstring>
 #include <cJSON.h>
@@ -147,17 +148,26 @@ bool WebsocketProtocol::OpenAudioChannel() {
         } else {
             // Parse JSON data
             auto root = cJSON_Parse(data);
-            auto type = cJSON_GetObjectItem(root, "type");
-            if (cJSON_IsString(type)) {
-                if (strcmp(type->valuestring, "hello") == 0) {
-                    ParseServerHello(root);
-                } else {
-                    if (on_incoming_json_ != nullptr) {
-                        on_incoming_json_(root);
-                    }
-                }
+
+            // Check if this is a JSON-RPC message (MCP protocol)
+            auto jsonrpc = cJSON_GetObjectItem(root, "jsonrpc");
+            if (cJSON_IsString(jsonrpc) && strcmp(jsonrpc->valuestring, "2.0") == 0) {
+                // Route to MCP server
+                McpServer::GetInstance().ParseMessage(root);
             } else {
-                ESP_LOGE(TAG, "Missing message type, data: %s", data);
+                // Handle xiaozhi protocol messages (with "type" field)
+                auto type = cJSON_GetObjectItem(root, "type");
+                if (cJSON_IsString(type)) {
+                    if (strcmp(type->valuestring, "hello") == 0) {
+                        ParseServerHello(root);
+                    } else {
+                        if (on_incoming_json_ != nullptr) {
+                            on_incoming_json_(root);
+                        }
+                    }
+                } else {
+                    ESP_LOGE(TAG, "Unknown message format, data: %s", data);
+                }
             }
             cJSON_Delete(root);
         }
