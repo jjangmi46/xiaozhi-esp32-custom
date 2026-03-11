@@ -99,7 +99,8 @@ private:
             }
 
             ESP_LOGE(TAG, "Camera initialization failed - video device not opened");
-            delete camera_;
+            // Don't delete - Camera base class doesn't have virtual destructor
+            // On init failure, device will be reset anyway
             camera_ = nullptr;
         }
 
