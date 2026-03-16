@@ -17,6 +17,10 @@
 #include <ssid_manager.h>
 #include "afsk_demod.h"
 
+#ifdef CONFIG_USE_MDNS_DISCOVERY
+#include "mdns_discovery.h"
+#endif
+
 static const char *TAG = "WifiBoard";
 
 WifiBoard::WifiBoard() {
@@ -113,6 +117,13 @@ void WifiBoard::StartNetwork() {
         EnterWifiConfigMode();
         return;
     }
+
+#ifdef CONFIG_USE_MDNS_DISCOVERY
+    // Initialize mDNS for server discovery after WiFi is connected
+    if (MdnsDiscovery::Initialize()) {
+        ESP_LOGI(TAG, "mDNS initialized for server discovery");
+    }
+#endif
 }
 
 NetworkInterface* WifiBoard::GetNetwork() {

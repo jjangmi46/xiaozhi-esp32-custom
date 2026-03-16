@@ -35,6 +35,7 @@ set(SOURCES "audio/audio_codec.cc"
             "settings.cc"
             "device_state_event.cc"
             "assets.cc"
+            "mdns_discovery.cc"
             "main.cc"
             )
 

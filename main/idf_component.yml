@@ -111,3 +111,4 @@ dependencies:
   espressif/esp_lcd_touch_st7123: ^1.0.0
   espressif/servo:
     version: '*'
+  espressif/mdns: ^1.10.1
