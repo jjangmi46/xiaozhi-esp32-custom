@@ -10,6 +10,7 @@
 #include <esp_timer.h>
 
 #include "wifi_station.h"
+#include "ssid_manager.h"
 #include "application.h"
 #include "audio/codecs/es8311_audio_codec.h"
 #include "button.h"
@@ -352,6 +353,20 @@ class FreenoveESP32S3Display : public WifiBoard {
         ResetWifiConfiguration();
       }
       app.ToggleChatState();
+    });
+
+    // Long press BOOT button to forget all saved WiFi networks
+    boot_button_.OnLongPress([this]() {
+      ESP_LOGI(TAG, "Long press detected - clearing saved WiFi credentials");
+      GetDisplay()->ShowNotification("Forgetting WiFi...");
+      vTaskDelay(pdMS_TO_TICKS(500));
+
+      // Clear all saved SSIDs from NVS
+      SsidManager::GetInstance().Clear();
+      ESP_LOGI(TAG, "WiFi credentials cleared");
+
+      // Enter WiFi configuration mode
+      ResetWifiConfiguration();
     });
   }
 
