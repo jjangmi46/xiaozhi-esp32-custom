@@ -60,6 +60,8 @@ class FreenoveESP32S3Display : public WifiBoard {
   esp_timer_handle_t angry_revert_timer_ = nullptr;
   int tap_count_ = 0;
   bool first_multi_tap_ = true;
+  bool screen_long_press_listening_ = false;  // Track if listening started via screen long press
+  bool boot_button_listening_ = false;  // Track if listening started/controlled via boot button
 
   // Idle animation
   esp_timer_handle_t idle_anim_timer_ = nullptr;
@@ -133,6 +135,40 @@ class FreenoveESP32S3Display : public WifiBoard {
       // Reset/restart the multi-tap window timer
       esp_timer_stop(board->tap_timer_);
       esp_timer_start_once(board->tap_timer_, MULTI_TAP_WINDOW_US);
+  }
+
+  // LVGL long press callback — start listening (manual VAD)
+  static void OnScreenLongPressed(lv_event_t* e) {
+      auto* board = static_cast<FreenoveESP32S3Display*>(lv_event_get_user_data(e));
+      auto& app = Application::GetInstance();
+      DeviceState state = app.GetDeviceState();
+
+      if (state == kDeviceStateIdle) {
+          // Start fresh listening session in manual mode
+          ESP_LOGI(TAG, "Screen long press - start listening (manual VAD)");
+          board->screen_long_press_listening_ = true;
+          app.StartListening();
+      } else if (state == kDeviceStateListening) {
+          // Already listening (continuous mode), switch to manual mode
+          // On release, will stop and process
+          ESP_LOGI(TAG, "Screen long press - switching to manual VAD");
+          board->screen_long_press_listening_ = true;
+      }
+  }
+
+  // LVGL release callback — stop listening if started via long press
+  static void OnScreenReleased(lv_event_t* e) {
+      auto* board = static_cast<FreenoveESP32S3Display*>(lv_event_get_user_data(e));
+      auto& app = Application::GetInstance();
+
+      // Only stop if we started listening via screen long press
+      if (board->screen_long_press_listening_) {
+          board->screen_long_press_listening_ = false;
+          if (app.GetDeviceState() == kDeviceStateListening) {
+              ESP_LOGI(TAG, "Screen released - stop listening (manual VAD)");
+              app.StopListening();
+          }
+      }
   }
 
   // Timer callback — fires when multi-tap window expires, processes accumulated taps
@@ -340,24 +376,18 @@ class FreenoveESP32S3Display : public WifiBoard {
     lv_obj_add_flag(touch_overlay, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_clear_flag(touch_overlay, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(touch_overlay, OnScreenClicked, LV_EVENT_CLICKED, this);
+    // Manual VAD: long press to talk, release to process
+    lv_obj_add_event_cb(touch_overlay, OnScreenLongPressed, LV_EVENT_LONG_PRESSED, this);
+    lv_obj_add_event_cb(touch_overlay, OnScreenReleased, LV_EVENT_RELEASED, this);
     lvgl_port_unlock();
 
     ESP_LOGI(TAG, "Touch initialization complete.");
   }
 
   void InitializeButtons() {
-    boot_button_.OnClick([this]() {
-      auto &app = Application::GetInstance();
-      if (app.GetDeviceState() == kDeviceStateStarting &&
-          !WifiStation::GetInstance().IsConnected()) {
-        ResetWifiConfiguration();
-      }
-      app.ToggleChatState();
-    });
-
-    // Long press BOOT button to forget all saved WiFi networks
-    boot_button_.OnLongPress([this]() {
-      ESP_LOGI(TAG, "Long press detected - clearing saved WiFi credentials");
+    // 5 clicks: Reset WiFi configuration
+    boot_button_.OnMultipleClick([this]() {
+      ESP_LOGI(TAG, "5 clicks detected - clearing saved WiFi credentials");
       GetDisplay()->ShowNotification("Forgetting WiFi...");
       vTaskDelay(pdMS_TO_TICKS(500));
 
@@ -367,6 +397,45 @@ class FreenoveESP32S3Display : public WifiBoard {
 
       // Enter WiFi configuration mode
       ResetWifiConfiguration();
+    }, 5);
+
+    // Manual VAD mode: Hold button to talk, release to process
+    // Press down: Start listening or switch to manual mode
+    boot_button_.OnPressDown([this]() {
+      auto &app = Application::GetInstance();
+      DeviceState state = app.GetDeviceState();
+
+      // During startup without WiFi, trigger WiFi config
+      if (state == kDeviceStateStarting &&
+          !WifiStation::GetInstance().IsConnected()) {
+        ResetWifiConfiguration();
+        return;
+      }
+
+      if (state == kDeviceStateIdle) {
+        // Start fresh listening session in manual mode
+        ESP_LOGI(TAG, "Button pressed - start listening (manual VAD)");
+        boot_button_listening_ = true;
+        app.StartListening();
+      } else if (state == kDeviceStateListening) {
+        // Already listening (continuous mode), switch to manual mode
+        // On release, will stop and process
+        ESP_LOGI(TAG, "Button pressed - switching to manual VAD");
+        boot_button_listening_ = true;
+      }
+    });
+
+    // Release: Stop listening and process audio
+    boot_button_.OnPressUp([this]() {
+      auto &app = Application::GetInstance();
+      // Only stop if we started/controlled via button press
+      if (boot_button_listening_) {
+        boot_button_listening_ = false;
+        if (app.GetDeviceState() == kDeviceStateListening) {
+          ESP_LOGI(TAG, "Button released - stop listening (manual VAD)");
+          app.StopListening();
+        }
+      }
     });
   }
 
