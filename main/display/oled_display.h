@@ -2,9 +2,12 @@
 #define OLED_DISPLAY_H
 
 #include "lvgl_display.h"
+#include "gif/lvgl_gif.h"
 
 #include <esp_lcd_panel_io.h>
 #include <esp_lcd_panel_ops.h>
+
+#include <memory>
 
 
 class OledDisplay : public LvglDisplay {
@@ -19,7 +22,9 @@ private:
     lv_obj_t* content_right_ = nullptr;
     lv_obj_t* container_ = nullptr;
     lv_obj_t* side_bar_ = nullptr;
-    lv_obj_t *emotion_label_ = nullptr;
+    lv_obj_t* emotion_label_ = nullptr;
+    lv_obj_t* emotion_image_ = nullptr;
+    std::unique_ptr<LvglGif> gif_controller_ = nullptr;
     lv_obj_t* chat_message_label_ = nullptr;
 
     virtual bool Lock(int timeout_ms = 0) override;
