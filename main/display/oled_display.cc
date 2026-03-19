@@ -179,9 +179,9 @@ void OledDisplay::SetupUI_128x64() {
     lv_obj_set_style_border_width(container_, 0, 0);
     lv_obj_set_style_pad_row(container_, 0, 0);
 
-    /* Layer 1: Top bar - for status icons */
+    /* Layer 1: Top bar - for status icons (reduced height for bigger emoji) */
     top_bar_ = lv_obj_create(container_);
-    lv_obj_set_size(top_bar_, LV_HOR_RES, 16);
+    lv_obj_set_size(top_bar_, LV_HOR_RES, 12);
     lv_obj_set_style_radius(top_bar_, 0, 0);
     lv_obj_set_style_bg_opa(top_bar_, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(top_bar_, 0, 0);
@@ -210,9 +210,9 @@ void OledDisplay::SetupUI_128x64() {
     lv_label_set_text(battery_label_, "");
     lv_obj_set_style_text_font(battery_label_, icon_font, 0);
 
-    /* Layer 2: Status bar - for center text labels */
+    /* Layer 2: Status bar - for center text labels (reduced height for bigger emoji) */
     status_bar_ = lv_obj_create(screen);
-    lv_obj_set_size(status_bar_, LV_HOR_RES, 16);
+    lv_obj_set_size(status_bar_, LV_HOR_RES, 12);
     lv_obj_set_style_radius(status_bar_, 0, 0);
     lv_obj_set_style_bg_opa(status_bar_, LV_OPA_TRANSP, 0);  // Transparent background
     lv_obj_set_style_border_width(status_bar_, 0, 0);
@@ -246,7 +246,7 @@ void OledDisplay::SetupUI_128x64() {
     lv_obj_set_style_flex_main_place(content_, LV_FLEX_ALIGN_CENTER, 0);
 
     content_left_ = lv_obj_create(content_);
-    lv_obj_set_size(content_left_, 32, LV_SIZE_CONTENT);
+    lv_obj_set_size(content_left_, 52, 52);  // Larger emoji area for 128x64
     lv_obj_set_style_pad_all(content_left_, 0, 0);
     lv_obj_set_style_border_width(content_left_, 0, 0);
 
@@ -254,12 +254,10 @@ void OledDisplay::SetupUI_128x64() {
     lv_obj_set_style_text_font(emotion_label_, large_icon_font, 0);
     lv_label_set_text(emotion_label_, FONT_AWESOME_MICROCHIP_AI);
     lv_obj_center(emotion_label_);
-    lv_obj_set_style_pad_top(emotion_label_, 8, 0);
 
     // Emotion image for custom animated emojis (hidden by default, shown when custom emoji is set)
     emotion_image_ = lv_image_create(content_left_);
     lv_obj_center(emotion_image_);
-    lv_obj_set_style_pad_top(emotion_image_, 8, 0);
     lv_obj_add_flag(emotion_image_, LV_OBJ_FLAG_HIDDEN);
 
     content_right_ = lv_obj_create(content_);
@@ -273,8 +271,8 @@ void OledDisplay::SetupUI_128x64() {
     lv_label_set_text(chat_message_label_, "");
     lv_label_set_long_mode(chat_message_label_, LV_LABEL_LONG_SCROLL_CIRCULAR);
     lv_obj_set_style_text_align(chat_message_label_, LV_TEXT_ALIGN_LEFT, 0);
-    lv_obj_set_width(chat_message_label_, width_ - 32);
-    lv_obj_set_style_pad_top(chat_message_label_, 14, 0);
+    lv_obj_set_width(chat_message_label_, width_ - 52);  // Account for larger emoji area
+    lv_obj_set_style_pad_top(chat_message_label_, 18, 0);  // Adjusted for larger content area
 
     // Start scrolling subtitle after a delay
     static lv_anim_t a;
@@ -410,8 +408,8 @@ void OledDisplay::SetEmotion(const char* emotion) {
             if (image != nullptr) {
                 DisplayLockGuard lock(this);
 
-                // Emoji display area is 32x32 pixels (or height_-16 for 128x64 layout)
-                const int emoji_area_size = 32;
+                // Emoji display area: 52x52 for 128x64, 32x32 for 128x32
+                const int emoji_area_size = (height_ == 64) ? 52 : 32;
 
                 if (image->IsGif()) {
                     // Create GIF controller for animated emoji
