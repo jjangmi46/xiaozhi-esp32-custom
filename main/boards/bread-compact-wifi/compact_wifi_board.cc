@@ -111,27 +111,21 @@ private:
             app.ToggleChatState();
         });
 
-        // Manual VAD mode: Hold boot button to talk, release to process
-        // Press down: Start listening or switch to manual mode
-        boot_button_.OnPressDown([this]() {
+        // Manual VAD mode: Long press boot button to talk, release to process
+        // Long press: Start listening in manual mode
+        boot_button_.OnLongPress([this]() {
             auto& app = Application::GetInstance();
             DeviceState state = app.GetDeviceState();
 
-            // During startup without WiFi, trigger WiFi config
-            if (state == kDeviceStateStarting && !WifiStation::GetInstance().IsConnected()) {
-                ResetWifiConfiguration();
-                return;
-            }
-
             if (state == kDeviceStateIdle) {
                 // Start fresh listening session in manual mode
-                ESP_LOGI(TAG, "Boot button pressed - start listening (manual VAD)");
+                ESP_LOGI(TAG, "Boot button long press - start listening (manual VAD)");
                 boot_button_listening_ = true;
                 app.StartListening();
             } else if (state == kDeviceStateListening) {
                 // Already listening (continuous mode), switch to manual mode
                 // On release, will stop and process
-                ESP_LOGI(TAG, "Boot button pressed - switching to manual VAD");
+                ESP_LOGI(TAG, "Boot button long press - switching to manual VAD");
                 boot_button_listening_ = true;
             }
         });
