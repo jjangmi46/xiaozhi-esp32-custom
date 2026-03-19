@@ -32,6 +32,7 @@ private:
     Button touch_button_;
     Button volume_up_button_;
     Button volume_down_button_;
+    bool boot_button_listening_ = false;  // Track if listening started/controlled via boot button
 
     void InitializeDisplayI2c() {
         i2c_master_bus_config_t bus_config = {
@@ -109,6 +110,45 @@ private:
             }
             app.ToggleChatState();
         });
+
+        // Manual VAD mode: Hold boot button to talk, release to process
+        // Press down: Start listening or switch to manual mode
+        boot_button_.OnPressDown([this]() {
+            auto& app = Application::GetInstance();
+            DeviceState state = app.GetDeviceState();
+
+            // During startup without WiFi, trigger WiFi config
+            if (state == kDeviceStateStarting && !WifiStation::GetInstance().IsConnected()) {
+                ResetWifiConfiguration();
+                return;
+            }
+
+            if (state == kDeviceStateIdle) {
+                // Start fresh listening session in manual mode
+                ESP_LOGI(TAG, "Boot button pressed - start listening (manual VAD)");
+                boot_button_listening_ = true;
+                app.StartListening();
+            } else if (state == kDeviceStateListening) {
+                // Already listening (continuous mode), switch to manual mode
+                // On release, will stop and process
+                ESP_LOGI(TAG, "Boot button pressed - switching to manual VAD");
+                boot_button_listening_ = true;
+            }
+        });
+
+        // Release: Stop listening and process audio
+        boot_button_.OnPressUp([this]() {
+            auto& app = Application::GetInstance();
+            // Only stop if we started/controlled via button press
+            if (boot_button_listening_) {
+                boot_button_listening_ = false;
+                if (app.GetDeviceState() == kDeviceStateListening) {
+                    ESP_LOGI(TAG, "Boot button released - stop listening (manual VAD)");
+                    app.StopListening();
+                }
+            }
+        });
+
         touch_button_.OnPressDown([this]() {
             Application::GetInstance().StartListening();
         });
