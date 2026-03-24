@@ -7,6 +7,27 @@ config OTA_URL
     help
         The application will access this URL to check for new firmwares and server address.
 
+config USE_MDNS_DISCOVERY
+    bool "Enable mDNS Server Discovery"
+    default y
+    help
+        Enable mDNS service discovery to automatically find xiaozhi servers on the
+        local network. This allows the device to connect to the server even when
+        the server's IP address changes (e.g., phone hotspot IP changes).
+
+        The device will query for _xiaozhi._tcp services and use the discovered
+        server address. If no server is found via mDNS, it falls back to the
+        configured OTA URL.
+
+config MDNS_DISCOVERY_TIMEOUT_MS
+    int "mDNS Discovery Timeout (ms)"
+    default 5000
+    depends on USE_MDNS_DISCOVERY
+    range 1000 30000
+    help
+        Timeout in milliseconds for mDNS server discovery.
+        Default is 5000ms (5 seconds).
+
 choice
     prompt "Flash Assets"
     default FLASH_DEFAULT_ASSETS

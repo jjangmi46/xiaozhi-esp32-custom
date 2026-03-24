@@ -14,6 +14,10 @@
 #include <esp_hmac.h>
 #endif
 
+#ifdef CONFIG_USE_MDNS_DISCOVERY
+#include "mdns_discovery.h"
+#endif
+
 #include <cstring>
 #include <vector>
 #include <sstream>
@@ -42,6 +46,35 @@ Ota::~Ota() {
 
 std::string Ota::GetCheckVersionUrl() {
     Settings settings("wifi", false);
+
+#ifdef CONFIG_USE_MDNS_DISCOVERY
+    // First, try to discover server via mDNS
+    // This allows connection to work even when server IP changes
+    ESP_LOGI(TAG, "Attempting mDNS server discovery...");
+
+    // Initialize mDNS if not already done
+    MdnsDiscovery::Initialize();
+
+    int timeout = CONFIG_MDNS_DISCOVERY_TIMEOUT_MS;
+    auto discovery = MdnsDiscovery::DiscoverServer(timeout);
+
+    if (discovery.found) {
+        ESP_LOGI(TAG, "Server discovered via mDNS: %s", discovery.url.c_str());
+
+        // Cache the discovered URL for future use
+        if (settings.GetString("ota_url") != discovery.url) {
+            Settings wifi_settings("wifi", true);
+            wifi_settings.SetString("ota_url", discovery.url.c_str());
+            ESP_LOGI(TAG, "Cached discovered server URL");
+        }
+
+        return discovery.url;
+    } else {
+        ESP_LOGW(TAG, "mDNS discovery failed, falling back to configured URL");
+    }
+#endif
+
+    // Fall back to stored or default URL
     std::string url = settings.GetString("ota_url");
     if (url.empty()) {
         url = CONFIG_OTA_URL;

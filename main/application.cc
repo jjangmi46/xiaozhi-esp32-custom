@@ -481,9 +481,12 @@ void Application::Start() {
                     }
                 });
             } else if (strcmp(state->valuestring, "stop") == 0) {
-                Schedule([this]() {
+                // Check if server wants device to go idle (rest mode)
+                auto idle = cJSON_GetObjectItem(root, "idle");
+                bool go_idle = cJSON_IsTrue(idle);
+                Schedule([this, go_idle]() {
                     if (device_state_ == kDeviceStateSpeaking) {
-                        if (listening_mode_ == kListeningModeManualStop) {
+                        if (go_idle || listening_mode_ == kListeningModeManualStop) {
                             SetDeviceState(kDeviceStateIdle);
                         } else {
                             SetDeviceState(kDeviceStateListening);
