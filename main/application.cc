@@ -301,7 +301,9 @@ void Application::ToggleChatState() {
     } else if (device_state_ == kDeviceStateListening) {
         Schedule([this]() {
             protocol_->SendAbortSpeaking(kAbortReasonNone);  // Tell server to discard
-            protocol_->CloseAudioChannel();
+            // Don't close channel - keep connection alive for proactive mode/alarms
+            // Server can send "listen start" to wake device later
+            SetDeviceState(kDeviceStateIdle);
         });
     }
 }
@@ -553,6 +555,28 @@ void Application::Start() {
                     });
                 } else {
                     ESP_LOGW(TAG, "Unknown system command: %s", command->valuestring);
+                }
+            }
+        } else if (strcmp(type->valuestring, "listen") == 0) {
+            // Server requesting device to start/stop listening (for proactive mode, alarms)
+            auto state = cJSON_GetObjectItem(root, "state");
+            if (cJSON_IsString(state)) {
+                if (strcmp(state->valuestring, "start") == 0) {
+                    ESP_LOGI(TAG, "Server requested listen start (wake from idle)");
+                    Schedule([this]() {
+                        // Wake device and start listening if idle
+                        if (device_state_ == kDeviceStateIdle) {
+                            // Connection should already be open (server sent this message)
+                            SetListeningMode(kListeningModeAutoStop);
+                        }
+                    });
+                } else if (strcmp(state->valuestring, "stop") == 0) {
+                    ESP_LOGI(TAG, "Server requested listen stop");
+                    Schedule([this]() {
+                        if (device_state_ == kDeviceStateListening) {
+                            SetDeviceState(kDeviceStateIdle);
+                        }
+                    });
                 }
             }
         } else if (strcmp(type->valuestring, "alert") == 0) {
