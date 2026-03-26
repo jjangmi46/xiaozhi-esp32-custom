@@ -399,6 +399,15 @@ class FreenoveESP32S3Display : public WifiBoard {
       ResetWifiConfiguration();
     }, 5);
 
+    // Single click: Toggle chat state (auto-VAD mode, like compact_wifi_board)
+    boot_button_.OnClick([this]() {
+      auto& app = Application::GetInstance();
+      if (app.GetDeviceState() == kDeviceStateStarting && !WifiStation::GetInstance().IsConnected()) {
+        ResetWifiConfiguration();
+      }
+      app.ToggleChatState();
+    });
+
     // Manual VAD mode: Hold button to talk, release to process
     // Press down: Start listening or switch to manual mode
     boot_button_.OnPressDown([this]() {

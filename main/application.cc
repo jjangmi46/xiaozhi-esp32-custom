@@ -618,6 +618,21 @@ void Application::Start() {
         if (audio_initialized_) {
             audio_service_.PlaySound(Lang::Sounds::OGG_SUCCESS);
         }
+
+        // Auto-connect to server on boot (stay connected for proactive mode/alarms)
+        Schedule([this]() {
+            if (!protocol_->IsAudioChannelOpened()) {
+                ESP_LOGI(TAG, "Auto-connecting to server on boot...");
+                SetDeviceState(kDeviceStateConnecting);
+                if (protocol_->OpenAudioChannel()) {
+                    ESP_LOGI(TAG, "Auto-connected, staying idle (ready for server commands)");
+                    SetDeviceState(kDeviceStateIdle);
+                } else {
+                    ESP_LOGW(TAG, "Auto-connect failed, will connect on user interaction");
+                    SetDeviceState(kDeviceStateIdle);
+                }
+            }
+        });
     }
 }
 
