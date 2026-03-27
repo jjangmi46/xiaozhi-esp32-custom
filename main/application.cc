@@ -520,9 +520,12 @@ void Application::Start() {
         //         });
         //     }
         } else if (strcmp(type->valuestring, "llm") == 0) {
+            ESP_LOGI(TAG, "Received llm message");
             auto emotion = cJSON_GetObjectItem(root, "emotion");
             if (cJSON_IsString(emotion)) {
+                ESP_LOGI(TAG, "LLM emotion: %s", emotion->valuestring);
                 Schedule([this, display, emotion_str = std::string(emotion->valuestring)]() {
+                    ESP_LOGI(TAG, "Calling SetEmotion: %s", emotion_str.c_str());
                     // 1. Original: Set the emotion on the Screen
                     display->SetEmotion(emotion_str.c_str());
 
@@ -779,7 +782,8 @@ void Application::SetDeviceState(DeviceState state) {
         case kDeviceStateUnknown:
         case kDeviceStateIdle:
             display->SetStatus(Lang::Strings::STANDBY);
-            display->SetEmotion("neutral");
+            // Don't reset emotion here - let it persist until new emotion received
+            // display->SetEmotion("neutral");
             if (audio_initialized_) {
                 audio_service_.EnableVoiceProcessing(false);
                 audio_service_.EnableWakeWordDetection(true);
@@ -787,12 +791,13 @@ void Application::SetDeviceState(DeviceState state) {
             break;
         case kDeviceStateConnecting:
             display->SetStatus(Lang::Strings::CONNECTING);
-            display->SetEmotion("neutral");
+            display->SetEmotion("neutral");  // Reset on new connection
             display->SetChatMessage("system", "");
             break;
         case kDeviceStateListening:
             display->SetStatus(Lang::Strings::LISTENING);
-            display->SetEmotion("neutral");
+            // Don't reset emotion here - preserve during conversation
+            // display->SetEmotion("neutral");
 
             // Make sure the audio processor is running
             if (audio_initialized_ && !audio_service_.IsAudioProcessorRunning()) {

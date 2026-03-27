@@ -468,6 +468,7 @@ void OledDisplay::SetEmotion(const char* emotion) {
 
     // Fall back to font icon if no custom emoji found
     const char* utf8 = font_awesome_get_utf8(emotion);
+    ESP_LOGI(TAG, "SetEmotion FontAwesome fallback: %s -> %s", emotion, utf8 ? "found" : "not found");
     DisplayLockGuard lock(this);
 
     // Hide image, show label
@@ -478,8 +479,10 @@ void OledDisplay::SetEmotion(const char* emotion) {
 
     if (utf8 != nullptr) {
         lv_label_set_text(emotion_label_, utf8);
+        ESP_LOGI(TAG, "Set emotion icon: %s", emotion);
     } else {
         lv_label_set_text(emotion_label_, FONT_AWESOME_NEUTRAL);
+        ESP_LOGW(TAG, "Unknown emotion '%s', using neutral", emotion);
     }
 }
 
